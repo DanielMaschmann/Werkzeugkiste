@@ -1009,10 +1009,10 @@ class FileTools:
         # load data
         data_cube = hdu[hdu_number].data
         # now get the 3rd axis of the cube
-        x_axis_of_cube = header['CRVAL3'] + np.arange(header['NAXIS3']) * header['CDELT3']
+        x_axis_values = header['CRVAL3'] + np.arange(header['NAXIS3']) * header['CDELT3']
         # close hdu again
         hdu.close()
-        return data_cube, x_axis_of_cube, header, wcs3d, wcs2d
+        return data_cube, x_axis_values, header, wcs3d, wcs2d
 
 
 

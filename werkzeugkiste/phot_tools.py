@@ -1051,6 +1051,8 @@ class ApertTools:
             return wcs.proj_plane_pixel_scales()[0].value * 3600 * phys_params.nircam_aperture_rad_pix[band]
         if obs == 'miri':
             return PSFTools.load_jwst_psf_dict(band=band, instrument='miri')['ee_65_arcsec']
+        if obs == 'astrosat':
+            return 0.5
 
     @staticmethod
     def get_standard_ap_corr_fact(obs, band, target=None):
