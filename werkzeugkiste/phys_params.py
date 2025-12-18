@@ -526,15 +526,15 @@ nircam_aperture_corr = {
 # here we gather the FWHM from empirical measurements and the according ee energy value
 
 miri_empirical_fwhm = {
-    'F560W' : {'pivot_wave_mu': 5.589, 'fwhm_arcsec': 0.207, 'fwhm_pix': 1.882},
-    'F770W' : {'pivot_wave_mu': 7.528, 'fwhm_arcsec': 0.269, 'fwhm_pix': 2.445},
-    'F1000W' : {'pivot_wave_mu': 9.883, 'fwhm_arcsec': 0.328, 'fwhm_pix': 2.982},
-    'F1130W' : {'pivot_wave_mu': 11.298, 'fwhm_arcsec': 0.375, 'fwhm_pix': 3.409},
-    'F1280W' : {'pivot_wave_mu': 12.712, 'fwhm_arcsec': 0.420, 'fwhm_pix': 3.818},
-    'F1500W' : {'pivot_wave_mu': 14.932, 'fwhm_arcsec': 0.488, 'fwhm_pix': 4.436},
-    'F1800W' : {'pivot_wave_mu': 17.875, 'fwhm_arcsec': 0.591, 'fwhm_pix': 5.373},
-    'F2100W' : {'pivot_wave_mu': 20.563, 'fwhm_arcsec': 0.674, 'fwhm_pix': 6.127},
-    'F2550W' : {'pivot_wave_mu': 25.147, 'fwhm_arcsec': 0.803, 'fwhm_pix': 7.300}
+    'F560W': {'pivot_wave_mu': 5.589, 'fwhm_arcsec': 0.207, 'fwhm_pix': 1.882},
+    'F770W': {'pivot_wave_mu': 7.528, 'fwhm_arcsec': 0.269, 'fwhm_pix': 2.445},
+    'F1000W': {'pivot_wave_mu': 9.883, 'fwhm_arcsec': 0.328, 'fwhm_pix': 2.982},
+    'F1130W': {'pivot_wave_mu': 11.298, 'fwhm_arcsec': 0.375, 'fwhm_pix': 3.409},
+    'F1280W': {'pivot_wave_mu': 12.712, 'fwhm_arcsec': 0.420, 'fwhm_pix': 3.818},
+    'F1500W': {'pivot_wave_mu': 14.932, 'fwhm_arcsec': 0.488, 'fwhm_pix': 4.436},
+    'F1800W': {'pivot_wave_mu': 17.875, 'fwhm_arcsec': 0.591, 'fwhm_pix': 5.373},
+    'F2100W': {'pivot_wave_mu': 20.563, 'fwhm_arcsec': 0.674, 'fwhm_pix': 6.127},
+    'F2550W': {'pivot_wave_mu': 25.147, 'fwhm_arcsec': 0.803, 'fwhm_pix': 7.300}
 }
 
 miri_empirical_ee_rad = {
@@ -664,7 +664,7 @@ or look a more detailed data base at at https://physics.nist.gov/PhysRefData/ASD
 the wavelength are in :math: `\\AA´
 the emission line names are the vacuum wavelength rounded to integer
 '''
-opt_line_wave = {
+spec_line_dict = {
     3347: {'line_name': 'nev',
            'transition': 'forbidden',
            'air_wave': 3345.821,

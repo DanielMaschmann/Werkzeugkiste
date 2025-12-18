@@ -5,24 +5,78 @@ from os import path
 from urllib import request
 import numpy as np
 import matplotlib.pyplot as plt
+import astropy.units as u
 from astropy import constants as const
-speed_of_light_kmps = const.c.to('km/s').value
 from scipy.constants import c as speed_of_light_mps
 from ppxf.ppxf import ppxf
 import ppxf.sps_util as lib
 import ppxf.ppxf_util as util
 from TardisPipeline.readData.MUSE_WFM import get_MUSE_polyFWHM
-# same data pipeline
 from werkzeugkiste import helper_func, phys_params
 from werkzeugkiste.fit_tools import FitModels
 
 
-class SpecTools:
+class SpecHelper:
     def __init__(self):
         pass
 
     @staticmethod
+    def conv_vel2delta_wave(line, vel, line_ref='vac_wave'):
+        """
+        Function to calculate the line wavelength shift due to velocity
+
+        Parameters
+        ----------
+        line : int or float
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
+        line_ref : str
+
+
+        Returns
+        -------
+        wave_shift : ``astropy.units.Quantity``
+            the unit is Angstrom
+        """
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+        return vel.to(u.km / u.s) / const.c.to(u.km / u.s) * phys_params.spec_line_dict[line][line_ref] * u.AA
+
+    @staticmethod
+    def conv_delta_wave2vel(line, delta_wave, line_ref='vac_wave'):
+        """
+        Function to calculate the line wavelength shift due to velocity
+
+        Parameters
+        ----------
+        line : int or float
+        delta_wave : float or ``astropy.units.Quantity``
+            important: if delta_wave has no astopy quantitiy the unit Angstrom will be assumed
+        line_ref : str
+
+
+        Returns
+        -------
+        vel : ``astropy.units.Quantity``
+            the unit is km/s
+        """
+        if not isinstance(delta_wave, u.Quantity):
+            delta_wave *= u.AA
+        return delta_wave.to(u.AA) * const.c.to(u.km / u.s) / (phys_params.spec_line_dict[line][line_ref] * u.AA)
+
+    @staticmethod
     def instrument2wave_ref(instrument):
+        """
+        Function to get reference wavelength estimator from instrument
+
+        Parameters
+        ----------
+        instrument : str
+
+        Returns
+        -------
+        wave_ref : str
+        """
         assert (instrument in ['muse', 'manga', 'sdss'])
         if instrument == 'muse':
             return 'vac_wave'
@@ -30,16 +84,35 @@ class SpecTools:
             return 'vac_wave'
 
     @staticmethod
-    def get_inst_broad_sig(line, instrument='muse', unit='kmps'):
+    def get_inst_broad_sig(line, instrument='muse', return_value='vel', wave_ref=None):
+        """
+        Function to get instrumental broadening
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        !!!! To Do: add further instruments !!!!
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        Parameters
+        ----------
+        line : int or str
+        instrument : str
+        return_value : str
+        wave_ref : str
+        Returns
+        -------
+        inst_broad: ``astropy.units.Quantity``
+        """
+
         assert (instrument in ['muse', 'manga', 'sdss'])
+        assert (return_value in ['vel', 'wave'])
+        if wave_ref is None:
+            wave_ref = SpecHelper.instrument2wave_ref(instrument=instrument)
         if instrument == 'muse':
-            wave = phys_params.opt_line_wave[line][SpecTools.instrument2wave_ref(instrument=instrument)]
-            inst_broad_sig_wave = get_MUSE_polyFWHM(x=wave) / (2 * np.sqrt(2 * np.log(2)))
-            if unit == 'angstrom':
-                return inst_broad_sig_wave
-            elif unit in ['kmps', 'mps']:
-                return SpecTools.conv_delta_wave2vel(line=line, delta_wave=inst_broad_sig_wave, vel_unit=unit,
-                                                     line_ref=SpecTools.instrument2wave_ref(instrument=instrument))
+            wave = phys_params.spec_line_dict[line][wave_ref]
+            inst_broad_sig = (get_MUSE_polyFWHM(x=wave) / (2 * np.sqrt(2 * np.log(2)))) * u.AA
+            if return_value == 'wave':
+                return inst_broad_sig
+            elif return_value in ['vel']:
+                return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=inst_broad_sig, line_ref=wave_ref)
         else:
             raise KeyError(instrument, ' not understand')
 
@@ -49,6 +122,7 @@ class SpecTools:
         Function to get redshift from NED with astroquery
         Parameters
         ----------
+        target : str
 
         Returns
         -------
@@ -62,81 +136,280 @@ class SpecTools:
         return ned_table['Redshift'][0]
 
     @staticmethod
-    def get_target_sys_vel(target=None, redshift=None, vel_unit='kmps'):
+    def get_target_sys_vel(target=None, redshift=None):
         """
         Function to get systemic velocity based on redshift or NED redshift
-        the conversion is based on eq.(8) of Cappellari (2017)
+        the conversion is based on eq.(8) of Cappellari (2017) (2017MNRAS.466..798C)
         Parameters
         ----------
+        target : str
+        redshift : float
 
         Returns
         -------
-        sys_vel : float
+        sys_vel : ``astropy.units.Quantity``
+            unit is km/ s
         """
-        assert (vel_unit in ['kmps', 'mps'])
-        speed_of_light = globals()['speed_of_light_%s' % vel_unit]
         if redshift is not None:
-            return np.log(redshift + 1) * speed_of_light
+            return np.log(redshift + 1) * const.c.to(u.km / u.s)
         elif target is not None:
-            redshift = SpecTools.get_target_ned_redshift(target=target)
-            return np.log(redshift + 1) * speed_of_light
+            redshift = SpecHelper.get_target_ned_redshift(target=target)
+            return np.log(redshift + 1) * const.c.to(u.km / u.s)
         else:
-            raise KeyError(' either target or redshift must be not None!')
+            raise KeyError(' either target or redshift must be given!')
 
     @staticmethod
-    def vel2redshift(vel, vel_unit='kmps'):
+    def vel2redshift(vel):
         """
         Function to convert spectral velocity to redshift
+        the conversion is based on eq.(8) of Cappellari (2017) (2017MNRAS.466..798C)
+
+        Parameters
         ----------
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
 
         Returns
         -------
         redshift : float
         """
-        assert (vel_unit in ['kmps', 'mps'])
-        speed_of_light = globals()['speed_of_light_%s' % vel_unit]
-        return np.exp(vel / speed_of_light) - 1
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+        return np.exp(vel.to(u.km / u.s) / const.c.to(u.km / u.s)) - 1
 
     @staticmethod
-    def conv_rest_wave2obs_wave(rest_wave, vel_kmps):
-        return rest_wave * (1 + vel_kmps / speed_of_light_kmps)
+    def conv_rest_wave2obs_wave(rest_wave, vel):
+        """
+        Function to convert restframe wavelength to an observed wavlelength.
+
+        Parameters
+        ----------
+        rest_wave : float or ``astropy.units.Quantity``
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
+
+        Returns
+        -------
+        obs_wave :  float or ``astropy.units.Quantity``
+        """
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+        if not isinstance(rest_wave, u.Quantity):
+            rest_wave *= u.AA
+        return rest_wave.to(u.AA) * (1 + vel.to(u.km / u.s) / const.c.to(u.km / u.s))
 
     @staticmethod
-    def get_line_pos(line, vel_kmps=None, target=None, redshift=None, instrument='muse'):
-        if vel_kmps is None:
-            vel_kmps = SpecTools.get_target_sys_vel(target=target, redshift=redshift, vel_unit='kmps')
-        return SpecTools.conv_rest_wave2obs_wave(
-            rest_wave=phys_params.opt_line_wave[line][SpecTools.instrument2wave_ref(instrument=instrument)],
-            vel_kmps=vel_kmps)
+    def get_line_pos(line, vel=None, target=None, redshift=None, instrument='muse', wave_ref=None):
+        """
+        Function to get the position of a line based on redshift or velocity
+
+        Parameters
+        ----------
+        line : int or str
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
+        target : str
+        redshift : float
+        instrument : str
+        wave_ref : str
+
+        Returns
+        -------
+        obs_wave : ``astropy.units.Quantity``
+            wavelength is units of angstrom
+        """
+
+        if vel is None:
+            vel = SpecHelper.get_target_sys_vel(target=target, redshift=redshift)
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+
+        if wave_ref is None:
+            wave_ref = SpecHelper.instrument2wave_ref(instrument=instrument)
+
+        return SpecHelper.conv_rest_wave2obs_wave(rest_wave=phys_params.spec_line_dict[line][wave_ref],
+                                                 vel=vel.to(u.km / u.s))
 
     @staticmethod
-    def conv_vel2delta_wave(line, vel, vel_unit='kmps', line_ref='vac_wave'):
-        assert (vel_unit in ['kmps', 'mps'])
-        speed_of_light = globals()['speed_of_light_%s' % vel_unit]
-        return vel / speed_of_light * phys_params.opt_line_wave[line][line_ref]
+    def conv_helio_cen_vel2obs_line_wave(vel, line, line_ref='vac_wave'):
+        """
+        Function to get the position of a line based on redshift or velocity
 
-    @staticmethod
-    def conv_delta_wave2vel(line, delta_wave, vel_unit='kmps', line_ref='vac_wave'):
-        assert (vel_unit in ['kmps', 'mps'])
-        speed_of_light = globals()['speed_of_light_%s' % vel_unit]
-        return delta_wave * speed_of_light / phys_params.opt_line_wave[line][line_ref]
+        Parameters
+        ----------
+        line : int or str
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
+        target : str
+        redshift : float
+        instrument : str
+        wave_ref : str
 
-    @staticmethod
-    def conv_helio_cen_vel2obs_line_wave(line_vel, line, vel_unit='kmps', line_ref='vac_wave'):
-        return phys_params.opt_line_wave[line][line_ref] + SpecTools.conv_vel2delta_wave(line=line, vel=line_vel,
-                                                                                         vel_unit=vel_unit,
-                                                                                         line_ref=line_ref)
+        Returns
+        -------
+        obs_wave : ``astropy.units.Quantity``
+            wavelength is units of angstrom
+        """
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+
+        return phys_params.spec_line_dict[line][line_ref] + SpecHelper.conv_vel2delta_wave(
+            line=line, vel=vel.to(u.km / u.s), line_ref=line_ref)
 
     @staticmethod
     def conv_obs_line_wave2helio_cen_vel(obs_line_wave, line, vel_unit='kmps', line_ref='vac_wave'):
-        line_offset = obs_line_wave - phys_params.opt_line_wave[line][line_ref]
-        return SpecTools.conv_delta_wave2vel(line=line, delta_wave=line_offset, vel_unit=vel_unit, line_ref=line_ref)
+        """
+        Function to get the position of a line based on redshift or velocity
+
+        Parameters
+        ----------
+        obs_line_wave : float or ``astropy.units.Quantity``
+            important: assuming units of Angstrom if not specified
+        line : int or str
+        target : str
+        redshift : float
+        instrument : str
+        wave_ref : str
+
+        Returns
+        -------
+        vel : ``astropy.units.Quantity``
+            wavelength is units of km / s
+        """
+
+        if not isinstance(obs_line_wave, u.Quantity):
+            obs_line_wave *= (u.AA)
+
+        line_offset = obs_line_wave.to(u.AA) - phys_params.spec_line_dict[line][line_ref]
+        return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=line_offset, line_ref=line_ref)
+
+    @staticmethod
+    def get_kcwi_lsf_sig(wave):
+        """
+        Adopted from Eq. 11 of van Dokkum+2019 2019ApJ...880...91V
+
+        Parameters
+        ----------
+        wave : float or ``astropy.units.Quantity``
+            in Units of angstrom
+        Return
+        ---------
+        lsf : ``astropy.units.Quantity``
+            in Units of angstrom
+
+        """
+        if not isinstance(wave, u.Quantity):
+            wave *= u.AA
+        return (0.377 - 5.79e-5 * (wave.to(u.AA).value - 5000) - 1.144e-7 * ((wave.to(u.AA).value - 5000)**2)) * u.AA
+
+    @staticmethod
+    def get_kcwi_lsf_fwhm(wave):
+        """
+        Parameters
+        ----------
+        wave : float or ``astropy.units.Quantity``
+            in Units of angstrom
+        Return
+        ---------
+        lsf : ``astropy.units.Quantity``
+            in Units of angstrom
+
+        """
+        return SpecHelper.get_kcwi_lsf_sig(wave=wave)*2*np.sqrt(2 * np.ln(2))
+
+    @staticmethod
+    def get_muse_lsf_fwhm(wave):
+        """
+        we use equation 8 of Bacon et al 2017
+        which is using the LSF calibration of the ultra deep field - 10 in the HUDF
+
+        Parameters
+        ----------
+        wave : float or ``astropy.units.Quantity``
+            in Units of angstrom
+        Return
+        ---------
+        lsf : ``astropy.units.Quantity``
+            in Units of angstrom
+
+        """
+        if not isinstance(wave, u.Quantity):
+            wave *= u.AA
+        return get_MUSE_polyFWHM(wave.to(u.AA).value, version="udf10") * u.AA
+
+    @staticmethod
+    def get_muse_lsf_sig(wave):
+        """
+
+        Parameters
+        ----------
+        wave : float or ``astropy.units.Quantity``
+            in Units of angstrom
+        Return
+        ---------
+        lsf : ``astropy.units.Quantity``
+            in Units of angstrom
+
+        """
+        return SpecHelper.get_muse_lsf_sig(wave=wave) / (2*np.sqrt(2 * np.ln(2)))
+
+    @staticmethod
+    def log_rebin_spec_data(wave, spec_flx, spec_flx_err):
+        """
+        function to rescale the spectra to a natural logarithm withthe smallest spectral steps available.
+
+        Parameters
+        ----------
+        wave : array-like or ``astropy.units.Quantity``
+        spec_flx : array-like or ``astropy.units.Quantity``
+        spec_flx_err : array-like or ``astropy.units.Quantity``
+
+        Returns
+        -------
+        ln_wave : array-like
+        wave : array-like
+        ln_rebin_spec_flx : array-like
+        ln_rebin_spec_flx_err : array-like
+        ln_rebin_velscale_kmps_per_pix : float
+        """
+
+        if isinstance(wave, u.Quantity):
+            wave = wave.value
+
+        if isinstance(spec_flx, u.Quantity):
+            spec_flx = spec_flx.value
+
+        if isinstance(spec_flx_err, u.Quantity):
+            spec_flx_err = spec_flx_err.value
+
+        # get the smallest velocity step
+        ln_rebin_velscale_kmps_per_pix = np.min(const.c.to(u.km / u.s).value * np.diff(np.log(wave)))
+        # rescale fluxes
+        ln_rebin_spec_flx, ln_rebin_ln_wave, ln_rebin_velscale_kmps_per_pix = util.log_rebin(
+            lam=wave, spec=spec_flx, velscale=ln_rebin_velscale_kmps_per_pix)
+        # rescale the uncertainties
+        ln_rebin_spec_flx_err, _, _ = util.log_rebin(lam=wave, spec=spec_flx_err,
+                                                     velscale=ln_rebin_velscale_kmps_per_pix)
+        # get also wavelength in linear form
+        ln_rebin_lin_wave = np.exp(ln_rebin_ln_wave)
+
+        return (ln_rebin_ln_wave, ln_rebin_lin_wave, ln_rebin_spec_flx, ln_rebin_spec_flx_err,
+                ln_rebin_velscale_kmps_per_pix)
+
+
+
+
+
+
+
+
+
 
     @staticmethod
     def compute_gauss(x_data, line, amp, mu_vel, sig_vel, vel_unit='kmps', line_ref='vac_wave'):
-        pos_peak = SpecTools.conv_helio_cen_vel2obs_line_wave(line_vel=mu_vel, line=line, vel_unit=vel_unit,
+        pos_peak = SpecHelper.conv_helio_cen_vel2obs_line_wave(line_vel=mu_vel, line=line, vel_unit=vel_unit,
                                                               line_ref=line_ref)
-        sig_obs_wave = SpecTools.conv_vel2delta_wave(line=line, vel=sig_vel, vel_unit=vel_unit, line_ref=line_ref)
+        sig_obs_wave = SpecHelper.conv_vel2delta_wave(line=line, vel=sig_vel, vel_unit=vel_unit, line_ref=line_ref)
         return FitModels.gaussian(x_values=x_data, amp=amp, mu=pos_peak, sig=sig_obs_wave)
 
     @staticmethod
@@ -148,10 +421,10 @@ class SpecTools:
         sig_int_vel = em_line_fit_dict['sig_%s_gauss_%i' % (line_type, gauss_index)]
 
         # get instrumental broadening
-        sig_inst_broad_vel = SpecTools.get_inst_broad_sig(line=line, instrument=instrument, unit='kmps')
+        sig_inst_broad_vel = SpecHelper.get_inst_broad_sig(line=line, instrument=instrument, unit='kmps')
         sig_obs_vel = np.sqrt(sig_int_vel ** 2 + sig_inst_broad_vel ** 2)
-        return SpecTools.compute_gauss(x_data=x_data, line=line, amp=amp, mu_vel=mu_vel, sig_vel=sig_obs_vel,
-                                       vel_unit=vel_unit, line_ref=SpecTools.instrument2wave_ref(instrument=instrument))
+        return SpecHelper.compute_gauss(x_data=x_data, line=line, amp=amp, mu_vel=mu_vel, sig_vel=sig_obs_vel,
+                                       vel_unit=vel_unit, line_ref=SpecHelper.instrument2wave_ref(instrument=instrument))
 
     @staticmethod
     def wave_window2mask(wave, wave_window):
@@ -169,8 +442,8 @@ class SpecTools:
 
         # get masks
         # mask_line = (wave > line_window[0]) & (wave < line_window[1])
-        mask_line = SpecTools.wave_window2mask(wave=wave, wave_window=line_window)
-        mask_continuum = SpecTools.wave_window2mask(wave=wave, wave_window=continuum_window)
+        mask_line = SpecHelper.wave_window2mask(wave=wave, wave_window=line_window)
+        mask_continuum = SpecHelper.wave_window2mask(wave=wave, wave_window=continuum_window)
         # # There can be ,multiple continuum windows
         # if isinstance(continuum_window, tuple):
         #     mask_continuum = (wave > continuum_window[0]) & (wave < continuum_window[1])
@@ -221,21 +494,21 @@ class SpecTools:
     @staticmethod
     def get_line_mask(wave, line, vel_kmps, target, instrument='muse', blue_limit=30., red_limit=30.):
         if line in (6550, 6565, 6585):
-            nii_6550_observed_line = SpecTools.get_line_pos(line=6550, vel_kmps=vel_kmps, target=target,
+            nii_6550_observed_line = SpecHelper.get_line_pos(line=6550, vel_kmps=vel_kmps, target=target,
                                                             instrument=instrument)
-            nii_6585_observed_line = SpecTools.get_line_pos(line=6585, vel_kmps=vel_kmps, target=target,
+            nii_6585_observed_line = SpecHelper.get_line_pos(line=6585, vel_kmps=vel_kmps, target=target,
                                                             instrument=instrument)
             return (wave > (nii_6550_observed_line - blue_limit)) & \
                 (wave < nii_6585_observed_line + red_limit)
         elif line in (6718, 6733):
-            sii_6718_observed_line = SpecTools.get_line_pos(line=6718, vel_kmps=vel_kmps, target=target,
+            sii_6718_observed_line = SpecHelper.get_line_pos(line=6718, vel_kmps=vel_kmps, target=target,
                                                             instrument=instrument)
-            sii_6733_observed_line = SpecTools.get_line_pos(line=6733, vel_kmps=vel_kmps, target=target,
+            sii_6733_observed_line = SpecHelper.get_line_pos(line=6733, vel_kmps=vel_kmps, target=target,
                                                             instrument=instrument)
             return (wave > (sii_6718_observed_line - blue_limit)) & \
                 (wave < sii_6733_observed_line + red_limit)
         else:
-            obs_line = SpecTools.get_line_pos(line=line, vel_kmps=vel_kmps, target=target, instrument=instrument)
+            obs_line = SpecHelper.get_line_pos(line=line, vel_kmps=vel_kmps, target=target, instrument=instrument)
             return (wave > (obs_line - blue_limit)) & \
                 (wave < obs_line + red_limit)
 
@@ -247,43 +520,11 @@ class SpecTools:
             ln_list = [4863, 4960, 5008, 6302, 6550, 6565, 6585, 6718, 6733]
 
         for line in ln_list:
-            multi_line_mask += SpecTools.get_line_mask(wave=wave, line=line, vel_kmps=vel_kmps, target=target,
+            multi_line_mask += SpecHelper.get_line_mask(wave=wave, line=line, vel_kmps=vel_kmps, target=target,
                                                        instrument=instrument,
                                                        blue_limit=blue_limit, red_limit=red_limit)
 
         return multi_line_mask
-
-    @staticmethod
-    def log_rebin_spec_data(wave, spec_flx, spec_flx_err):
-        """
-        function to rescale the spectra to a natural logarithm withthe smallest spectral steps available.
-
-        Parameters
-        ----------
-        wave : array-like
-        spec_flx : array-like
-        spec_flx_err : array-like
-
-        Returns
-        -------
-        ln_wave : array-like
-        wave : array-like
-        ln_rebin_spec_flx : array-like
-        ln_rebin_spec_flx_err : array-like
-        ln_rebin_velscale_kmps_per_pix : float
-        """
-        # get the smallest velocity step
-        ln_rebin_velscale_kmps_per_pix = np.min(speed_of_light_kmps * np.diff(np.log(wave)))
-        # rescale fluxes
-        ln_rebin_spec_flx, ln_rebin_ln_wave, ln_rebin_velscale_kmps_per_pix = util.log_rebin(lam=wave, spec=spec_flx,
-                                                                                             velscale=ln_rebin_velscale_kmps_per_pix)
-        # rescale the uncertainties
-        ln_rebin_spec_flx_err, _, _ = util.log_rebin(lam=wave, spec=spec_flx_err,
-                                                     velscale=ln_rebin_velscale_kmps_per_pix)
-        # get also wavelength in linear form
-        ln_rebin_wave = np.exp(ln_rebin_ln_wave)
-
-        return ln_rebin_ln_wave, ln_rebin_wave, ln_rebin_spec_flx, ln_rebin_spec_flx_err, ln_rebin_velscale_kmps_per_pix
 
 
 class PpxfTools:
@@ -352,7 +593,6 @@ class PpxfTools:
             'n_age_n_met_sps_temp': n_age_n_met_sps_temp,
             'ln_wave_sps_temp': ln_wave_sps_temp,
             'wave_sps_temp': wave_sps_temp,
-
         }
 
         return stellar_template_dict
@@ -420,21 +660,26 @@ class PpxfTools:
                 'has to be provided')
 
         if (target_name is not None) & (sys_vel is None):
-            sys_vel = SpecTools.get_target_sys_vel(target=target_name)
-
-
-        print('sys_vel ', sys_vel)
-
+            sys_vel = SpecHelper.get_target_sys_vel(target=target_name)
+        # get redshift
+        redshift = SpecHelper.vel2redshift(vel=sys_vel)
 
         # To Do: add the possibility of multiple stellar components #
-
         if n_star_comp > 1:
             raise NotImplementedError('Not yet implemented to have more than 1 stellar component!')
 
+        # get rebinned wavelength
+        # for further computation we also compute a rebinned spectrum for
+        ln_rebin_ln_wave, ln_rebin_lin_wave, ln_rebin_spec_flx, ln_rebin_spec_flx_err, ln_rebin_velscale_kmps_per_pix = (
+            SpecHelper.log_rebin_spec_data(wave=spec_dict['native_wave'], spec_flx=spec_dict['native_spec_flx'],
+                                                     spec_flx_err=spec_dict['native_spec_flx_err']))
+        ln_rebin_good_pixel_mask = np.invert(np.isnan(ln_rebin_spec_flx) + np.isinf(ln_rebin_spec_flx))
+        ln_rebin_lin_wave_range = [np.nanmin(ln_rebin_lin_wave), np.nanmax(ln_rebin_lin_wave)]
+
         # get stellar template
         stellar_template_dict = PpxfTools.get_stellar_template(
-            velscale_kmps_per_pix=spec_dict['ln_rebin_velscale_kmps_per_pix'],
-            lsf_dict={"lam": spec_dict['native_wave'], "fwhm": spec_dict['lsf']}, age_range=age_range,
+            velscale_kmps_per_pix=ln_rebin_velscale_kmps_per_pix,
+            lsf_dict={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value}, age_range=age_range,
             metal_range=metal_range, sps_name=sps_name, norm_range=norm_range)
 
         n_star_temps = stellar_template_dict['stars_templates'].shape[1]
@@ -443,16 +688,16 @@ class PpxfTools:
 
         # get kinematic start values and boundaries
         if allow_asym_star:
-            start_star = [sys_vel + vel_init_offset_star, init_vel_sig_star, 0, 0]
+            start_star = [sys_vel.value + vel_init_offset_star, init_vel_sig_star, 0, 0]
             moments = [4]
-            bounds_stars = [[sys_vel + vel_bound_lo_star, sys_vel + vel_bound_hi_star],
+            bounds_stars = [[sys_vel.value + vel_bound_lo_star, sys_vel.value + vel_bound_hi_star],
                             [sigma_bound_lo_star, sigma_bound_hi_star],
                             [-0.3, 0.3], [-0.3, 0.3]]
 
         else:
-            start_star = [sys_vel + vel_init_offset_star, init_vel_sig_star]
+            start_star = [sys_vel.value + vel_init_offset_star, init_vel_sig_star]
             moments = [2]
-            bounds_stars = [[sys_vel + vel_bound_lo_star, sys_vel + vel_bound_hi_star],
+            bounds_stars = [[sys_vel.value + vel_bound_lo_star, sys_vel.value + vel_bound_hi_star],
                             [sigma_bound_lo_star, sigma_bound_hi_star]]
         start = [start_star]
         bounds = [bounds_stars]
@@ -461,8 +706,9 @@ class PpxfTools:
         # get standard gas template
         # To Do: add a more customizable version of the emission line template
         standard_gas_templates, standard_gas_names, standard_line_wave = util.emission_lines(
-            ln_lam_temp=stellar_template_dict['ln_wave_sps_temp'], lam_range_gal=spec_dict['ln_rebin_wave_range'],
-            FWHM_gal={"lam": spec_dict['native_wave'], "fwhm": spec_dict['lsf']}, limit_doublets=False, tie_balmer=True, )
+            ln_lam_temp=stellar_template_dict['ln_wave_sps_temp'], lam_range_gal=ln_rebin_lin_wave_range,
+            FWHM_gal={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value}, limit_doublets=False,
+            tie_balmer=True, )
 
         # Note: this should be 1 unless the stellar continuum is fitted with multiple components
         current_gas_comp = n_star_comp
@@ -475,15 +721,15 @@ class PpxfTools:
         for gas_comp_idx in range(n_all_lines):
             # get starting values and specify number of moments
             if allow_asym_all_lines:
-                start_gas = [sys_vel + vel_init_offset_all_lines, init_vel_sig_all_lines, 0, 0]
+                start_gas = [sys_vel.value + vel_init_offset_all_lines, init_vel_sig_all_lines, 0, 0]
                 moments_gas = 4
-                bounds_gas = [[sys_vel + vel_bound_lo_all_lines, sys_vel + vel_bound_hi_all_lines],
+                bounds_gas = [[sys_vel.value + vel_bound_lo_all_lines, sys_vel.value + vel_bound_hi_all_lines],
                               [sigma_bound_lo_all_lines, sigma_bound_hi_all_lines],
                               [-0.3, 0.3], [-0.3, 0.3]]
             else:
-                start_gas = [sys_vel + vel_init_offset_all_lines, init_vel_sig_all_lines]
+                start_gas = [sys_vel.value + vel_init_offset_all_lines, init_vel_sig_all_lines]
                 moments_gas = 2
-                bounds_gas = [[sys_vel + vel_bound_lo_all_lines, sys_vel + vel_bound_hi_all_lines],
+                bounds_gas = [[sys_vel.value + vel_bound_lo_all_lines, sys_vel.value + vel_bound_hi_all_lines],
                               [sigma_bound_lo_all_lines, sigma_bound_hi_all_lines]]
             start.append(start_gas)
             moments.append(moments_gas)
@@ -505,15 +751,15 @@ class PpxfTools:
         for gas_comp_idx in range(n_only_allowed):
             # get starting values and specify number of moments
             if allow_asym_only_allowed:
-                start_gas = [sys_vel + vel_init_offset_only_allowed, init_vel_sig_only_allowed, 0, 0]
+                start_gas = [sys_vel.value + vel_init_offset_only_allowed, init_vel_sig_only_allowed, 0, 0]
                 moments_gas = 4
-                bounds_gas = [[sys_vel + vel_bound_lo_only_allowed, sys_vel + vel_bound_hi_only_allowed],
+                bounds_gas = [[sys_vel.value + vel_bound_lo_only_allowed, sys_vel.value + vel_bound_hi_only_allowed],
                               [sigma_bound_lo_only_allowed, sigma_bound_hi_only_allowed],
                               [-0.3, 0.3], [-0.3, 0.3]]
             else:
-                start_gas = [sys_vel + vel_init_offset_only_allowed, init_vel_sig_only_allowed]
+                start_gas = [sys_vel.value + vel_init_offset_only_allowed, init_vel_sig_only_allowed]
                 moments_gas = 2
-                bounds_gas = [[sys_vel + vel_bound_lo_only_allowed, sys_vel + vel_bound_hi_only_allowed],
+                bounds_gas = [[sys_vel.value + vel_bound_lo_only_allowed, sys_vel.value + vel_bound_hi_only_allowed],
                               [sigma_bound_lo_only_allowed, sigma_bound_hi_only_allowed]]
             start.append(start_gas)
             moments.append(moments_gas)
@@ -537,15 +783,15 @@ class PpxfTools:
         for gas_comp_idx in range(n_only_forbidden):
             # get starting values and specify number of moments
             if allow_asym_only_forbidden:
-                start_gas = [sys_vel + vel_init_offset_only_forbidden, init_vel_sig_only_forbidden, 0, 0]
+                start_gas = [sys_vel.value + vel_init_offset_only_forbidden, init_vel_sig_only_forbidden, 0, 0]
                 moments_gas = 4
-                bounds_gas = [[sys_vel + vel_bound_lo_only_forbidden, sys_vel + vel_bound_hi_only_forbidden],
+                bounds_gas = [[sys_vel.value + vel_bound_lo_only_forbidden, sys_vel.value + vel_bound_hi_only_forbidden],
                               [sigma_bound_lo_only_forbidden, sigma_bound_hi_only_forbidden],
                               [-0.3, 0.3], [-0.3, 0.3]]
             else:
-                start_gas = [sys_vel + vel_init_offset_only_forbidden, init_vel_sig_only_forbidden]
+                start_gas = [sys_vel.value + vel_init_offset_only_forbidden, init_vel_sig_only_forbidden]
                 moments_gas = 2
-                bounds_gas = [[sys_vel + vel_bound_lo_only_forbidden, sys_vel + vel_bound_hi_only_forbidden],
+                bounds_gas = [[sys_vel.value + vel_bound_lo_only_forbidden, sys_vel.value + vel_bound_hi_only_forbidden],
                               [sigma_bound_lo_only_forbidden, sigma_bound_hi_only_forbidden]]
             start.append(start_gas)
             moments.append(moments_gas)
@@ -564,13 +810,22 @@ class PpxfTools:
             # for the next line component use an individual gas component
             current_gas_comp += 1
 
-        # bring tampletes in correct form and combine them
+        # bring templates in correct form and combine them
         gas_templates = gas_templates.T
         templates = np.column_stack([stellar_template_dict['stars_templates'], gas_templates])
         # get mask of gas components
         mask_gas_component = np.array(component) > (n_star_comp - 1)
 
         ppxf_comp_dict = {
+            # log-rebinned spectrum
+            'ln_rebin_lin_wave_range': ln_rebin_lin_wave_range,
+            'ln_rebin_ln_wave': ln_rebin_ln_wave,
+            'ln_rebin_lin_wave': ln_rebin_lin_wave,
+            'ln_rebin_spec_flx': ln_rebin_spec_flx,
+            'ln_rebin_spec_flx_err': ln_rebin_spec_flx_err,
+            'ln_rebin_velscale_kmps_per_pix': ln_rebin_velscale_kmps_per_pix,
+            'ln_rebin_good_pixel_mask': ln_rebin_good_pixel_mask,
+            # fit components
             'stellar_template_dict': stellar_template_dict,
             'templates': templates,
             'component': component,
@@ -580,6 +835,8 @@ class PpxfTools:
             'mask_gas_component': mask_gas_component,
             'gas_names': gas_names,
             'line_wave': line_wave,
+            'sys_vel': sys_vel,
+            'redshift': redshift,
         }
 
         return ppxf_comp_dict
@@ -629,8 +886,8 @@ class PpxfTools:
 
         # get bounds for the dust attenuation
         dust_gas_1 = {"start": [init_gas_dust_av],
-                    "bounds": [[border_gas_dust_av_lo, border_gast_dus_av_hi]],
-                    "component": np.array(ppxf_comp_dict['component']) == 1}
+                      "bounds": [[border_gas_dust_av_lo, border_gast_dus_av_hi]],
+                      "component": np.array(ppxf_comp_dict['component']) == 1}
 
         dust_gas_2 = {"start": [init_gas_dust_av],
                       "bounds": [[border_gas_dust_av_lo, border_gast_dus_av_hi]],
@@ -643,13 +900,13 @@ class PpxfTools:
 
         pp = ppxf(
             templates=ppxf_comp_dict['templates'],
-            galaxy=spec_dict['ln_rebin_spec_flx'], noise=spec_dict['ln_rebin_spec_flx_err'],
-            mask=spec_dict['ln_rebin_good_pixel_mask'],
-            velscale=spec_dict['ln_rebin_velscale_kmps_per_pix'],
+            galaxy=ppxf_comp_dict['ln_rebin_spec_flx'], noise=ppxf_comp_dict['ln_rebin_spec_flx_err'],
+            mask=ppxf_comp_dict['ln_rebin_good_pixel_mask'],
+            velscale=ppxf_comp_dict['ln_rebin_velscale_kmps_per_pix'],
             start=ppxf_comp_dict['start'], moments=ppxf_comp_dict['moments'], bounds=ppxf_comp_dict['bounds'],
             degree=degree, mdegree=mdegree,
             global_search=False,
-            lam=spec_dict['ln_rebin_wave'], lam_temp=ppxf_comp_dict['stellar_template_dict']['wave_sps_temp'],
+            lam=ppxf_comp_dict['ln_rebin_lin_wave'], lam_temp=ppxf_comp_dict['stellar_template_dict']['wave_sps_temp'],
             reg_dim=ppxf_comp_dict['stellar_template_dict']['n_age_n_met_sps_temp'],
             component=ppxf_comp_dict['component'],
             gas_component=ppxf_comp_dict['mask_gas_component'],
@@ -657,28 +914,25 @@ class PpxfTools:
             gas_names=ppxf_comp_dict['gas_names'],
         )
 
-        print(pp.dust)
-
-        print(pp.dust[0]['sol'][0], pp.dust[1]['sol'][0], pp.dust[2]['sol'][0])
-
-        pp.plot()
-        plt.show()
-
+        # print(pp.dust)
+        # print(pp.dust[0]['sol'][0], pp.dust[1]['sol'][0], pp.dust[2]['sol'][0])
+        # pp.plot()
+        # plt.show()
+        #
         light_weights = pp.weights[~ppxf_comp_dict['mask_gas_component']]  # Exclude weights of the gas templates
-        light_weights = light_weights.reshape(ppxf_comp_dict['stellar_template_dict']['n_age_n_met_sps_temp'])  # Reshape to (n_ages, n_metal)
+        light_weights = light_weights.reshape(
+            ppxf_comp_dict['stellar_template_dict']['n_age_n_met_sps_temp'])  # Reshape to (n_ages, n_metal)
         light_weights /= light_weights.sum()  # Normalize to light fractions
 
-        plt.figure(figsize=(9, 3))
-        ppxf_comp_dict['stellar_template_dict']['sps'].plot(light_weights)
-        plt.title("Light Weights Fractions")
-        plt.tight_layout()
-
-        plt.show()
-
-        exit()
+        # plt.figure(figsize=(9, 3))
+        # ppxf_comp_dict['stellar_template_dict']['sps'].plot(light_weights)
+        # plt.title("Light Weights Fractions")
+        # plt.tight_layout()
+        # plt.show()
 
         ages, met = ppxf_comp_dict['stellar_template_dict']['sps'].mean_age_metal(light_weights)
-        mass2light = ppxf_comp_dict['stellar_template_dict']['sps'].mass_to_light(light_weights, redshift=redshift)
+        mass2light = ppxf_comp_dict['stellar_template_dict']['sps'].mass_to_light(light_weights,
+                                                                                  redshift=ppxf_comp_dict['redshift'])
 
         wave = pp.lam
         total_flux = pp.galaxy
@@ -700,7 +954,7 @@ class PpxfTools:
             'pp': pp,
             'star_red': pp.dust[0]['sol'][0], 'gas_red': pp.dust[1]['sol'][0],
             'sol_kin_comp': sol_kin_comp, 'balmer_kin_comp': balmer_kin_comp, 'forbidden_kin_comp': forbidden_kin_comp,
-            'sys_vel': sys_vel, 'redshift': redshift, 'rad_arcsec': spec_dict['rad_arcsec']
+            'sys_vel': sys_vel, 'redshift': ppxf_comp_dict['redshift'], 'rad_arcsec': spec_dict['rad_arcsec']
         }
 
         return ppxf_dict
@@ -725,10 +979,10 @@ class LineSpecFit:
             # ln_list = [6718, 6733]
 
         if sys_vel is None:
-            sys_vel = SpecTools.get_target_sys_vel(target=target)
+            sys_vel = SpecHelper.get_target_sys_vel(target=target)
         print('sys_vel ', sys_vel)
         # get data
-        ln_mask = SpecTools.get_multiple_line_mask(wave=wave, ln_list=ln_list, vel_kmps=sys_vel, target=target,
+        ln_mask = SpecHelper.get_multiple_line_mask(wave=wave, ln_list=ln_list, vel_kmps=sys_vel, target=target,
                                                    instrument=instrument,
                                                    blue_limit=blue_limit, red_limit=red_limit)
 
@@ -741,7 +995,7 @@ class LineSpecFit:
         dict_inst_broad = {}
         for line in ln_list:
             dict_inst_broad.update(
-                {line: SpecTools.get_inst_broad_sig(line=line, instrument=instrument, unit='kmps')})
+                {line: SpecHelper.get_inst_broad_sig(line=line, instrument=instrument, unit='kmps')})
 
         # initialize emission line fit
         fit_model = FitModels()
@@ -750,7 +1004,7 @@ class LineSpecFit:
                                ln_list=ln_list, dict_inst_broad=dict_inst_broad, x_data_format=x_data_format)
 
         fit_param_restrict_dict_nl_gauss, fit_param_restrict_dict_nl_lorentz, fit_param_restrict_dict_bl_gauss = \
-            SpecTools.get_fit_param_restrict_dict_outflow_search(target=target, n_nl_gauss=n_nl_gauss,
+            SpecHelper.get_fit_param_restrict_dict_outflow_search(target=target, n_nl_gauss=n_nl_gauss,
                                                                  n_nl_lorentz=n_nl_lorentz, n_bl_gauss=n_bl_gauss,
                                                                  balmer_ln=fit_model.balmer_ln, all_ln=fit_model.all_ln,
                                                                  wave=wave, em_flux=em_flux,
@@ -786,7 +1040,7 @@ class LineSpecFit:
     @staticmethod
     def estimate_line_amp(line, wave, em_flux, vel=None, target=None, redshift=None, instrument='muse', bin_rad=4):
         # get line position
-        line_pos = SpecTools.get_line_pos(line=line, vel_kmps=vel, target=target, redshift=redshift,
+        line_pos = SpecHelper.get_line_pos(line=line, vel_kmps=vel, target=target, redshift=redshift,
                                           instrument=instrument)
         # get wavelength steps
         # print(np.where(wave == np.wave - line_pos))
@@ -878,7 +1132,7 @@ class LineSpecFit:
         """
         # get systematic velocity
         if sys_vel is None:
-            sys_vel = SpecTools.get_target_sys_vel(target=target)
+            sys_vel = SpecHelper.get_target_sys_vel(target=target)
 
         # create the empty parameter dict
         fit_param_restrict_dict_nl_gauss = {}
@@ -1041,11 +1295,11 @@ class LineSpecFit:
             for line in all_ln:
                 # if gauss_index == 0:
                 #     if line == 5008:
-                #         init_amp = SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target, instrument=instrument, bin_rad=4) * 0.4
+                #         init_amp = SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target, instrument=instrument, bin_rad=4) * 0.4
                 #     else:
-                #         init_amp = SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target, instrument=instrument, bin_rad=4) * 0.01
+                #         init_amp = SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target, instrument=instrument, bin_rad=4) * 0.01
                 # else:
-                init_amp = SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                init_amp = SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                        instrument=instrument, bin_rad=4) * init_amp_nl_gauss_frac[
                                gauss_index]
                 fit_param_restrict_dict_nl_gauss['nl_gauss_%i' % gauss_index].update({
@@ -1070,15 +1324,15 @@ class LineSpecFit:
             for line in all_ln:
                 fit_param_restrict_dict_nl_lorentz['nl_lorentz_%i' % lorentz_index].update({
                     'amp_%i' % line:
-                        SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                        SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                     instrument=instrument, bin_rad=4) *
                         init_amp_nl_lorentz_frac[lorentz_index],
                     'lower_amp_%i' % line:
-                        SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                        SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                     instrument=instrument, bin_rad=4) *
                         lower_rel_amp_nl_lorentz[lorentz_index],
                     'upper_amp_%i' % line:
-                        SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                        SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                     instrument=instrument, bin_rad=4) *
                         upper_rel_amp_nl_lorentz[lorentz_index],
                     'amp_floating_%i' % line: amp_nl_lorentz_floating[lorentz_index]
@@ -1099,15 +1353,15 @@ class LineSpecFit:
             for line in balmer_ln:
                 fit_param_restrict_dict_bl_gauss['bl_gauss_%i' % gauss_index].update({
                     'amp_%i' % line:
-                        SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                        SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                     instrument=instrument, bin_rad=4) *
                         init_amp_bl_gauss_frac[gauss_index],
                     'lower_amp_%i' % line:
-                        SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                        SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                     instrument=instrument, bin_rad=4) *
                         lower_rel_amp_bl_gauss[gauss_index],
                     'upper_amp_%i' % line:
-                        SpecTools.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
+                        SpecHelper.estimate_line_amp(line=line, wave=wave, em_flux=em_flux, target=target,
                                                     instrument=instrument, bin_rad=4) *
                         upper_rel_amp_bl_gauss[gauss_index],
                     'amp_floating_%i' % line: amp_bl_gauss_floating[gauss_index]
@@ -1122,7 +1376,7 @@ class LineSpecFit:
         line_2 = 5898
 
         # now get the absorption line position
-        line_mask = SpecTools.get_multiple_line_mask(wave=ppxf_fit_dict['wave'],
+        line_mask = SpecHelper.get_multiple_line_mask(wave=ppxf_fit_dict['wave'],
                                                      ln_list=[5892, 5898],
                                                      vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                      target=target, instrument='muse', blue_limit=30., red_limit=50.)
@@ -1136,19 +1390,19 @@ class LineSpecFit:
         line_caii_2 = 8544
         line_caii_3 = 8665
 
-        line_pos_caii_1 = SpecTools.get_line_pos(line=line_caii_1, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
+        line_pos_caii_1 = SpecHelper.get_line_pos(line=line_caii_1, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                  target=None, redshift=None, instrument='muse')
-        line_pos_caii_2 = SpecTools.get_line_pos(line=line_caii_2, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
+        line_pos_caii_2 = SpecHelper.get_line_pos(line=line_caii_2, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                  target=None, redshift=None, instrument='muse')
-        line_pos_caii_3 = SpecTools.get_line_pos(line=line_caii_3, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
+        line_pos_caii_3 = SpecHelper.get_line_pos(line=line_caii_3, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                  target=None, redshift=None, instrument='muse')
         # get the sizes of absorption lines
         sig_int_vel = ppxf_fit_dict['sol_kin_comp'][1]
         # we will calculate the sizes with the middle line since this will not change too much over this region
         # get instrumental broadening
-        sig_inst_broad_vel = SpecTools.get_inst_broad_sig(line=line_caii_2, instrument='muse', unit='kmps')
+        sig_inst_broad_vel = SpecHelper.get_inst_broad_sig(line=line_caii_2, instrument='muse', unit='kmps')
         sig_obs_vel = np.sqrt(sig_int_vel ** 2 + sig_inst_broad_vel ** 2)
-        sig_obs_wave = SpecTools.conv_vel2delta_wave(line=line_caii_2, vel=sig_obs_vel, vel_unit='kmps',
+        sig_obs_wave = SpecHelper.conv_vel2delta_wave(line=line_caii_2, vel=sig_obs_vel, vel_unit='kmps',
                                                      line_ref='vac_wave')
 
         mask_abs_caii_1 = ((ppxf_fit_dict['wave'] > line_pos_caii_1 - 3 * sig_obs_wave) &
@@ -1168,17 +1422,17 @@ class LineSpecFit:
                                           [line_pos_caii_3 + 5 * sig_obs_wave, line_pos_caii_3 + 5 * sig_obs_wave + 50]
                                           ])
 
-        ew_dict_caii_1 = SpecTools.compute_ew(wave=ppxf_fit_dict['wave'], flux=ppxf_fit_dict['total_flux'],
+        ew_dict_caii_1 = SpecHelper.compute_ew(wave=ppxf_fit_dict['wave'], flux=ppxf_fit_dict['total_flux'],
                                               flux_err=ppxf_fit_dict['total_flux_err'],
                                               line_window=line_window_caii_1,
                                               continuum_window=continuum_window_caii)
 
-        ew_dict_caii_2 = SpecTools.compute_ew(wave=ppxf_fit_dict['wave'], flux=ppxf_fit_dict['total_flux'],
+        ew_dict_caii_2 = SpecHelper.compute_ew(wave=ppxf_fit_dict['wave'], flux=ppxf_fit_dict['total_flux'],
                                               flux_err=ppxf_fit_dict['total_flux_err'],
                                               line_window=line_window_caii_2,
                                               continuum_window=continuum_window_caii)
 
-        ew_dict_caii_3 = SpecTools.compute_ew(wave=ppxf_fit_dict['wave'], flux=ppxf_fit_dict['total_flux'],
+        ew_dict_caii_3 = SpecHelper.compute_ew(wave=ppxf_fit_dict['wave'], flux=ppxf_fit_dict['total_flux'],
                                               flux_err=ppxf_fit_dict['total_flux_err'],
                                               line_window=line_window_caii_3,
                                               continuum_window=continuum_window_caii)
@@ -1197,12 +1451,12 @@ class LineSpecFit:
         }
 
         # # now get the absorption line position
-        spec_part_mask = SpecTools.get_multiple_line_mask(wave=ppxf_fit_dict['wave'],
+        spec_part_mask = SpecHelper.get_multiple_line_mask(wave=ppxf_fit_dict['wave'],
                                                           ln_list=[line_caii_1, line_caii_2, line_caii_3],
                                                           vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                           target=None, instrument='muse', blue_limit=70., red_limit=70.)
 
-        mask_continuum = SpecTools.wave_window2mask(wave=ppxf_fit_dict['wave'], wave_window=continuum_window_caii)
+        mask_continuum = SpecHelper.wave_window2mask(wave=ppxf_fit_dict['wave'], wave_window=continuum_window_caii)
 
         # fit three gaussians to get the sizes
 
@@ -1241,21 +1495,21 @@ class LineSpecFit:
 
             ax.text(line_pos_caii_1,
                     np.min(ppxf_fit_dict['total_flux'][mask_abs_caii_1]) - (flux_max - flux_min) * 0.02,
-                    phys_params.opt_line_wave[line_caii_1][
+                    phys_params.spec_line_dict[line_caii_1][
                         'plot_name'] + ' \n' + r'EW = %.2f $\pm$ %.2f ${\rm \AA}$' % (ew_dict_caii_1['ew'],
                                                                                       ew_dict_caii_1['ew_err']),
                     ha='center', va='top', fontsize=fontsize)
 
             ax.text(line_pos_caii_2,
                     np.min(ppxf_fit_dict['total_flux'][mask_abs_caii_2]) - (flux_max - flux_min) * 0.02,
-                    phys_params.opt_line_wave[line_caii_2][
+                    phys_params.spec_line_dict[line_caii_2][
                         'plot_name'] + ' \n' + r'EW = %.2f $\pm$ %.2f ${\rm \AA}$' % (ew_dict_caii_2['ew'],
                                                                                       ew_dict_caii_2['ew_err']),
                     ha='center', va='top', fontsize=fontsize)
 
             ax.text(line_pos_caii_3,
                     np.min(ppxf_fit_dict['total_flux'][mask_abs_caii_3]) - (flux_max - flux_min) * 0.02,
-                    phys_params.opt_line_wave[line_caii_3][
+                    phys_params.spec_line_dict[line_caii_3][
                         'plot_name'] + ' \n' + r'EW = %.2f $\pm$ %.2f ${\rm \AA}$' % (ew_dict_caii_3['ew'],
                                                                                       ew_dict_caii_3['ew_err']),
                     ha='center', va='top', fontsize=fontsize)
@@ -1279,7 +1533,7 @@ class LineSpecFit:
                               init_mu_nl_gauss=100, init_sig_nl_gauss=200):
 
         # first fit ppxf
-        ppxf_dict = SpecTools.fit_ppxf2spec(
+        ppxf_dict = SpecHelper.fit_ppxf2spec(
             spec_dict=spec_dict, target=target, sps_name=sps_name, age_range=age_range, metal_range=metal_range,
             ln_list=ln_list, n_nl_gauss=n_nl_gauss, n_nl_lorentz=n_nl_lorentz, n_bl_gauss=n_bl_gauss,
             search_outflow=search_outflow, outflow_shift=outflow_shift, outflow_mu_offset=outflow_mu_offset,
@@ -1290,7 +1544,7 @@ class LineSpecFit:
             # ln_list = [5008, 6550, 6565, 6585]
 
         # now fit the emission lines
-        em_line_fit_dict = SpecTools.fit_em_lines2spec(ln_list=ln_list, target=target, wave=wavelength,
+        em_line_fit_dict = SpecHelper.fit_em_lines2spec(ln_list=ln_list, target=target, wave=wavelength,
                                                        em_flux=em_flux, em_flux_err=total_flux_err,
                                                        n_nl_gauss=n_nl_gauss, n_nl_lorentz=n_nl_lorentz,
                                                        n_bl_gauss=n_bl_gauss,
@@ -1429,7 +1683,7 @@ class LineSpecFit:
 #     line_window = np.array([observed_h_alpha - 3 * observed_sigma_h_alpha,
 #                             observed_h_alpha + 3 * observed_sigma_h_alpha])
 #
-#     ew_ha, ew_err_ha = SpecTools.compute_ew(wave=ppxf_dict['wavelength'], flux=ppxf_dict['total_flux'],
+#     ew_ha, ew_err_ha = SpecHelper.compute_ew(wave=ppxf_dict['wavelength'], flux=ppxf_dict['total_flux'],
 #                          flux_err=ppxf_dict['total_flux_err'],
 #                          line_window=line_window, continuum_window=continuum_window)
 #     print('ew_ha, ew_err_ha ', ew_ha, ew_err_ha)
@@ -1650,7 +1904,7 @@ class LineSpecFit:
 #
 #     moments = [4, 4, 4]
 #
-#     vel = speed_of_light_kmps * np.log(1 + redshift)  # eq.(8) of Cappellari (2017)
+#     vel = speed_of_light_kmps * np.log(1 + redshift)  # eq.(8) of Cappellari (2017) 2017MNRAS.466..798C
 #     start_gas = [vel, 150., 0, 0]  # starting guess
 #     start_star = [vel, 150., 0, 0]
 #     print(start_gas)
