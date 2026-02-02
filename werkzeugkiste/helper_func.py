@@ -6,25 +6,22 @@ import os
 from mailbox import FormatError
 from pathlib import Path, PosixPath
 import warnings
+import numpy as np
+from pandas import read_csv
 from astropy.nddata import Cutout2D
 from astropy.wcs import WCS
 from astropy.io import ascii, fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astroquery.simbad import Simbad
-from astropy import constants as const
-speed_of_light_kmps = const.c.to('km/s').value
 from scipy.constants import c as speed_of_light_mps
 from scipy.spatial import ConvexHull
 from scipy import odr
 from scipy.optimize import curve_fit
 from scipy.interpolate import RegularGridInterpolator
-import numpy as np
-from pandas import read_csv
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 from reproject import reproject_interp
-# own packages
 from werkzeugkiste import phys_params
 
 
@@ -138,11 +135,13 @@ class CoordTools:
         # get central coordinates
         ra_center = (ra_min + ra_max) / 2
         dec_center = (dec_min + dec_max) / 2
-
         # now create a WCS for this histogram
         new_wcs = WCS(naxis=2)
         # what is the center pixel of the XY grid.
-        new_wcs.wcs.crpix = [img_shape[1] / 2, img_shape[0] / 2]
+        # 1-based, as in FITS standard and therefore there is the + 0.5
+        # so in the case of an odd number of pixels this will be the number of the central pixel
+        # If the number of pixels is even it will be between the two central pixels
+        new_wcs.wcs.crpix = [img_shape[1] / 2 + 0.5, img_shape[0] / 2 + 0.5]
         # what is the galactic coordinate of that pixel.
         new_wcs.wcs.crval = [ra_center, dec_center]
         # what is the pixel scale in lon, lat.
@@ -794,7 +793,9 @@ class FileTools:
         -------
         target_name : str
         """
-        if target[-1] in ['n', 's', 'w', 'e', 'c', 'N', 'S', 'W', 'E', 'C']:
+        if target[-3:] == 'mpc':
+            return target
+        elif target[-1] in ['n', 's', 'w', 'e', 'c', 'N', 'S', 'W', 'E', 'C']:
             return target[:-1]
         else:
             return target
@@ -1014,8 +1015,6 @@ class FileTools:
         hdu.close()
         return data_cube, x_axis_values, header, wcs3d, wcs2d
 
-
-
     @staticmethod
     def load_fits_table(file_name, hdu_number=0):
         """function to open hdu using astropy.
@@ -1099,6 +1098,26 @@ class FileTools:
         if change_suffix & (file_name.suffix != suffix):
             file_name = file_name.with_suffix(suffix)
         return file_name
+
+    @staticmethod
+    def get_dap_data_identifier(res, ssp_model=None):
+        """
+        Function to get the name identifier of the DAP pipeline implemented for PHANGS-MUSE
+
+        Parameters
+        ----------
+        res : str
+        ssp_model : str
+
+        Return
+        ------
+        data_identifier : str
+        """
+        if res == 'copt':
+            data_identifier = res + '_' + ssp_model
+        else:
+            data_identifier = res
+        return data_identifier
 
 
 class GeometryTools:
@@ -1264,19 +1283,6 @@ class GeometryTools:
         # Thus, when selecting a value of an 2D array from coordinates it is important to know that this appears
         # flipped.
         return array[int(np.rint(y_pos)), int(np.rint(x_pos))]
-
-
-class SpecHelper:
-    def __init__(self):
-        pass
-
-    @staticmethod
-    def get_dap_data_identifier(res, ssp_model=None):
-        if res == 'copt':
-            data_identifier = res + '_' + ssp_model
-        else:
-            data_identifier = res
-        return data_identifier
 
 
 class FuncAndModels:

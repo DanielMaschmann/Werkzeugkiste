@@ -7,13 +7,67 @@ import numpy as np
 import matplotlib.pyplot as plt
 import astropy.units as u
 from astropy import constants as const
-from scipy.constants import c as speed_of_light_mps
-from ppxf.ppxf import ppxf
-import ppxf.sps_util as lib
-import ppxf.ppxf_util as util
-from TardisPipeline.readData.MUSE_WFM import get_MUSE_polyFWHM
+try:
+    from ppxf.ppxf import ppxf
+    import ppxf.sps_util as lib
+    import ppxf.ppxf_util as util
+except ImportError:
+    print('The package pPXF is not available. If you want to use it perform pip install ppxf')
+try:
+    from TardisPipeline.readData.MUSE_WFM import get_MUSE_polyFWHM
+except ImportError:
+    print('Spectroscopic analysis of MUSe data relying on the TardisPipeline is not available. '
+          'If you want to use this, clone the git repo at https://gitlab.com/francbelf/ifu-pipeline '
+          'and add package to your root directory. ')
 from werkzeugkiste import helper_func, phys_params
 from werkzeugkiste.fit_tools import FitModels
+
+
+standard_gas_line_comp_dict = {
+    # dust attenuation for all gas components
+    'use_dust_law_all_gas_comp': True,
+    'init_dust_av_all_gas_comp': 0.5, 'bound_dust_av_lo_all_gas_comp': 0, 'bound_dust_av_hi_all_gas_comp': 4,
+
+    # all lines
+    'n_custom_lines': 1,
+    'line_lists_custom_lines':
+        [['Hbeta', 'Halpha', '[SII]6716', '[SII]6731', 'HeI5876', '[OIII]5007_d', '[OI]6300_d', '[NII]6583_d']],
+    'limit_doublets_custom_lines': True,
+    'vel_init_offset_custom_lines': 0, 'vel_bound_lo_custom_lines': -500, 'vel_bound_hi_custom_lines': 500,
+    'init_vel_sig_custom_lines': 100, 'sigma_bound_lo_custom_lines': 0, 'sigma_bound_hi_custom_lines': 500,
+    'allow_asym_custom_lines': True,
+    'h3_init_custom_lines': 0.0, 'h3_bound_lo_custom_lines': -0.7, 'h3_bound_hi_custom_lines': -0.7,
+    'h4_init_custom_lines': 0.0, 'h4_bound_lo_custom_lines': -0.7, 'h4_bound_hi_custom_lines': -0.7,
+    'tie_hydrogen_custom_lines': False,
+    'use_dust_law_custom_lines': False,
+    'init_dust_av_custom_lines': 0.5, 'bound_dust_av_lo_custom_lines': 0, 'bound_dust_av_hi_custom_lines': 4,
+
+    # only allowed lines
+    'n_only_allowed': 0,
+    'line_lists_allowed':
+        [['Hbeta', 'Halpha', 'HeI5876']],
+    'vel_init_offset_only_allowed': 0, 'vel_bound_lo_only_allowed': -500, 'vel_bound_hi_only_allowed': 500,
+    'init_vel_sig_only_allowed': 100, 'sigma_bound_lo_only_allowed': 0, 'sigma_bound_hi_only_allowed': 500,
+    'allow_asym_only_allowed': True,
+    'h3_init_only_allowed': 0.0, 'h3_bound_lo_only_allowed': -0.7, 'h3_bound_hi_only_allowed': -0.7,
+    'h4_init_only_allowed': 0.0, 'h4_bound_lo_only_allowed': -0.7, 'h4_bound_hi_only_allowed': -0.7,
+    'tie_hydrogen_only_allowed': False,
+    'use_dust_law_only_allowed': False,
+    'init_dust_av_only_allowed': 0.5, 'bound_dust_av_lo_only_allowed': 0, 'bound_dust_av_hi_only_allowed': 4,
+
+    # only forbidden lines
+    'n_only_forbidden': 0,
+    'line_lists_only_forbidden':
+        [['[SII]6716', '[SII]6731', '[OIII]5007_d', '[OI]6300_d', '[NII]6583_d']],
+    'limit_doublets_only_forbidden': False,
+    'vel_init_offset_only_forbidden': 0, 'vel_bound_lo_only_forbidden': -500, 'vel_bound_hi_only_forbidden': 500,
+    'init_vel_sig_only_forbidden': 100, 'sigma_bound_lo_only_forbidden': 0, 'sigma_bound_hi_only_forbidden': 500,
+    'allow_asym_only_forbidden': True,
+    'h3_init_only_forbidden': 0.0, 'h3_bound_lo_only_forbidden': -0.7, 'h3_bound_hi_only_forbidden': -0.7,
+    'h4_init_only_forbidden': 0.0, 'h4_bound_lo_only_forbidden': -0.7, 'h4_bound_hi_only_forbidden': -0.7,
+    'use_dust_law_only_forbidden': False,
+    'init_dust_av_only_forbidden': 0.5, 'bound_dust_av_lo_only_forbidden': 0, 'bound_dust_av_hi_only_forbidden': 4,
+}
 
 
 class SpecHelper:
@@ -21,16 +75,16 @@ class SpecHelper:
         pass
 
     @staticmethod
-    def conv_vel2delta_wave(line, vel, line_ref='vac_wave'):
+    def vel2delta_wave(line, vel, vacuum=True):
         """
         Function to calculate the line wavelength shift due to velocity
 
         Parameters
         ----------
-        line : int or float
+        line : str
         vel : float or ``astropy.units.Quantity``
-            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
-        line_ref : str
+            important: if the velocity has no astropy quantity the unit km/s will be assumed
+        vacuum : bool
 
 
         Returns
@@ -40,19 +94,25 @@ class SpecHelper:
         """
         if not isinstance(vel, u.Quantity):
             vel *= (u.km / u.s)
-        return vel.to(u.km / u.s) / const.c.to(u.km / u.s) * phys_params.spec_line_dict[line][line_ref] * u.AA
+
+        if vacuum:
+            rest_wave = phys_params.all_line_dict[line]['vac_wave'] * u.Angstrom
+        else:
+            rest_wave = util.vac_to_air(lam_vac=phys_params.all_line_dict[line]['vac_wave']) * u.Angstrom
+
+        return vel.to(u.km / u.s) / const.c.to(u.km / u.s) * rest_wave
 
     @staticmethod
-    def conv_delta_wave2vel(line, delta_wave, line_ref='vac_wave'):
+    def delta_wave2vel(line, delta_wave, vacuum=True):
         """
         Function to calculate the line wavelength shift due to velocity
 
         Parameters
         ----------
-        line : int or float
+        line : str
         delta_wave : float or ``astropy.units.Quantity``
-            important: if delta_wave has no astopy quantitiy the unit Angstrom will be assumed
-        line_ref : str
+            important: if delta_wave has no astropy quantity the unit Angstrom will be assumed
+        vacuum : bool
 
 
         Returns
@@ -61,8 +121,14 @@ class SpecHelper:
             the unit is km/s
         """
         if not isinstance(delta_wave, u.Quantity):
-            delta_wave *= u.AA
-        return delta_wave.to(u.AA) * const.c.to(u.km / u.s) / (phys_params.spec_line_dict[line][line_ref] * u.AA)
+            delta_wave *= u.Angstrom
+
+        if vacuum:
+            rest_wave = phys_params.all_line_dict[line]['vac_wave'] * u.Angstrom
+        else:
+            rest_wave = util.vac_to_air(lam_vac=phys_params.all_line_dict[line]['vac_wave']) * u.Angstrom
+
+        return delta_wave.to(u.Angstrom) * const.c.to(u.km / u.s) / rest_wave
 
     @staticmethod
     def instrument2wave_ref(instrument):
@@ -82,39 +148,6 @@ class SpecHelper:
             return 'vac_wave'
         elif (instrument == 'manga') | (instrument == 'sdss'):
             return 'vac_wave'
-
-    @staticmethod
-    def get_inst_broad_sig(line, instrument='muse', return_value='vel', wave_ref=None):
-        """
-        Function to get instrumental broadening
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        !!!! To Do: add further instruments !!!!
-        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-        Parameters
-        ----------
-        line : int or str
-        instrument : str
-        return_value : str
-        wave_ref : str
-        Returns
-        -------
-        inst_broad: ``astropy.units.Quantity``
-        """
-
-        assert (instrument in ['muse', 'manga', 'sdss'])
-        assert (return_value in ['vel', 'wave'])
-        if wave_ref is None:
-            wave_ref = SpecHelper.instrument2wave_ref(instrument=instrument)
-        if instrument == 'muse':
-            wave = phys_params.spec_line_dict[line][wave_ref]
-            inst_broad_sig = (get_MUSE_polyFWHM(x=wave) / (2 * np.sqrt(2 * np.log(2)))) * u.AA
-            if return_value == 'wave':
-                return inst_broad_sig
-            elif return_value in ['vel']:
-                return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=inst_broad_sig, line_ref=wave_ref)
-        else:
-            raise KeyError(instrument, ' not understand')
 
     @staticmethod
     def get_target_ned_redshift(target):
@@ -167,7 +200,7 @@ class SpecHelper:
         Parameters
         ----------
         vel : float or ``astropy.units.Quantity``
-            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
+            important: if the velocity has no astropy quantity the unit km/s will be assumed
 
         Returns
         -------
@@ -178,110 +211,121 @@ class SpecHelper:
         return np.exp(vel.to(u.km / u.s) / const.c.to(u.km / u.s)) - 1
 
     @staticmethod
-    def conv_rest_wave2obs_wave(rest_wave, vel):
+    def redshift2vel(redshift):
         """
-        Function to convert restframe wavelength to an observed wavlelength.
+        Function to convert redshift to spectral velocity
+        the conversion is based on eq.(8) of Cappellari (2017) (2017MNRAS.466..798C)
+
+        Parameters
+        ----------
+        redshift : float
+        Returns
+        -------
+        vel : ``astropy.units.Quantity``
+        """
+
+        return np.log(redshift + 1) * const.c.to(u.km / u.s)
+
+    @staticmethod
+    def get_rest_wave(line, vacuum=True):
+        """
+        Function to get restframw emission line wavelength
+
+        Parameters
+        ----------
+        line : str
+        vacuum : bool
+
+        Returns
+        -------
+        rest_wave : ``astropy.units.Quantity``
+        """
+
+        if vacuum:
+            return phys_params.all_line_dict[line]['vac_wave'] * u.Angstrom
+        else:
+            return util.vac_to_air(lam_vac=phys_params.all_line_dict[line]['vac_wave']) * u.Angstrom
+
+    @staticmethod
+    def rest_wave2obs_wave(rest_wave, vel=None, redshift=None):
+        """
+        Function to convert restframe wavelength to an observed wavelength.
 
         Parameters
         ----------
         rest_wave : float or ``astropy.units.Quantity``
         vel : float or ``astropy.units.Quantity``
-            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
+            important: if the velocity has no astropy quantity the unit km/s will be assumed
+        redshift : float
 
         Returns
         -------
         obs_wave :  float or ``astropy.units.Quantity``
         """
+
+
+        if (vel is None) & (redshift is None):
+            raise KeyError('In order to calculate the observed wavelength either a velocity or redshift is needed')
+        if vel is None:
+            vel = SpecHelper.redshift2vel(redshift=redshift)
         if not isinstance(vel, u.Quantity):
             vel *= (u.km / u.s)
         if not isinstance(rest_wave, u.Quantity):
-            rest_wave *= u.AA
-        return rest_wave.to(u.AA) * (1 + vel.to(u.km / u.s) / const.c.to(u.km / u.s))
+            rest_wave *= u.Angstrom
+        return rest_wave.to(u.Angstrom) * (1 + vel.to(u.km / u.s) / const.c.to(u.km / u.s))
 
     @staticmethod
-    def get_line_pos(line, vel=None, target=None, redshift=None, instrument='muse', wave_ref=None):
+    def get_obs_line_pos(line, vel=None, redshift=None, vacuum=True):
         """
-        Function to get the position of a line based on redshift or velocity
+        Function to get the wavelength of an observed line which is shifted due to proper velocity
 
         Parameters
         ----------
-        line : int or str
+        line : str
         vel : float or ``astropy.units.Quantity``
-            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
-        target : str
         redshift : float
-        instrument : str
-        wave_ref : str
+        vacuum : bool
 
         Returns
         -------
-        obs_wave : ``astropy.units.Quantity``
-            wavelength is units of angstrom
+        rest_wave : ``astropy.units.Quantity``
         """
+        rest_wave = SpecHelper.get_rest_wave(line=line, vacuum=vacuum)
 
-        if vel is None:
-            vel = SpecHelper.get_target_sys_vel(target=target, redshift=redshift)
-        if not isinstance(vel, u.Quantity):
-            vel *= (u.km / u.s)
-
-        if wave_ref is None:
-            wave_ref = SpecHelper.instrument2wave_ref(instrument=instrument)
-
-        return SpecHelper.conv_rest_wave2obs_wave(rest_wave=phys_params.spec_line_dict[line][wave_ref],
-                                                 vel=vel.to(u.km / u.s))
+        return SpecHelper.rest_wave2obs_wave(rest_wave=rest_wave, vel=vel, redshift=redshift)
 
     @staticmethod
-    def conv_helio_cen_vel2obs_line_wave(vel, line, line_ref='vac_wave'):
+    def get_obs_line_window(line, vel=None, redshift=None, vacuum=True, blue_limit=30., red_limit=30.):
         """
-        Function to get the position of a line based on redshift or velocity
+        Function to get a boolean mask of the observed emission line
 
         Parameters
         ----------
-        line : int or str
+        line : str or list
         vel : float or ``astropy.units.Quantity``
-            important: if the velocity has no astopy quantitiy the unit km/s will be assumed
-        target : str
         redshift : float
-        instrument : str
-        wave_ref : str
-
+        vacuum : bool
+        blue_limit, red_limit : float
         Returns
         -------
-        obs_wave : ``astropy.units.Quantity``
-            wavelength is units of angstrom
-        """
-        if not isinstance(vel, u.Quantity):
-            vel *= (u.km / u.s)
-
-        return phys_params.spec_line_dict[line][line_ref] + SpecHelper.conv_vel2delta_wave(
-            line=line, vel=vel.to(u.km / u.s), line_ref=line_ref)
-
-    @staticmethod
-    def conv_obs_line_wave2helio_cen_vel(obs_line_wave, line, vel_unit='kmps', line_ref='vac_wave'):
-        """
-        Function to get the position of a line based on redshift or velocity
-
-        Parameters
-        ----------
-        obs_line_wave : float or ``astropy.units.Quantity``
-            important: assuming units of Angstrom if not specified
-        line : int or str
-        target : str
-        redshift : float
-        instrument : str
-        wave_ref : str
-
-        Returns
-        -------
-        vel : ``astropy.units.Quantity``
-            wavelength is units of km / s
+        rest_wave : ndarray
         """
 
-        if not isinstance(obs_line_wave, u.Quantity):
-            obs_line_wave *= (u.AA)
+        # make sure to use the correct quantities
+        if not isinstance(blue_limit, u.Quantity):
+            blue_limit *= u.Angstrom
+        else:
+            blue_limit = blue_limit.to(u.Angstrom)
+        if not isinstance(red_limit, u.Quantity):
+            red_limit *= u.Angstrom
+        else:
+            red_limit = red_limit.to(u.Angstrom)
 
-        line_offset = obs_line_wave.to(u.AA) - phys_params.spec_line_dict[line][line_ref]
-        return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=line_offset, line_ref=line_ref)
+        obs_line_pos = SpecHelper.get_obs_line_pos(line=line, vel=vel, redshift=redshift, vacuum=vacuum)
+
+        return obs_line_pos - blue_limit, obs_line_pos + red_limit
+
+
 
     @staticmethod
     def get_kcwi_lsf_sig(wave):
@@ -299,8 +343,8 @@ class SpecHelper:
 
         """
         if not isinstance(wave, u.Quantity):
-            wave *= u.AA
-        return (0.377 - 5.79e-5 * (wave.to(u.AA).value - 5000) - 1.144e-7 * ((wave.to(u.AA).value - 5000)**2)) * u.AA
+            wave *= u.Angstrom
+        return (0.377 - 5.79e-5 * (wave.to(u.Angstrom).value - 5000) - 1.144e-7 * ((wave.to(u.Angstrom).value - 5000)**2)) * u.Angstrom
 
     @staticmethod
     def get_kcwi_lsf_fwhm(wave):
@@ -315,7 +359,7 @@ class SpecHelper:
             in Units of angstrom
 
         """
-        return SpecHelper.get_kcwi_lsf_sig(wave=wave)*2*np.sqrt(2 * np.ln(2))
+        return SpecHelper.get_kcwi_lsf_sig(wave=wave)*2*np.sqrt(2 * np.log(2))
 
     @staticmethod
     def get_muse_lsf_fwhm(wave):
@@ -334,8 +378,8 @@ class SpecHelper:
 
         """
         if not isinstance(wave, u.Quantity):
-            wave *= u.AA
-        return get_MUSE_polyFWHM(wave.to(u.AA).value, version="udf10") * u.AA
+            wave *= u.Angstrom
+        return get_MUSE_polyFWHM(wave.to(u.Angstrom).value, version="udf10") * u.Angstrom
 
     @staticmethod
     def get_muse_lsf_sig(wave):
@@ -403,7 +447,183 @@ class SpecHelper:
 
 
 
+    @staticmethod
+    def wave_window2mask(wave, wave_window):
+        if isinstance(wave_window, tuple):
+            mask_wave = (wave > wave_window[0]) & (wave < wave_window[1])
+        else:
+            mask_wave = np.zeros(len(wave), dtype=bool)
+            for window_idx in range(wave_window.shape[0]):
+                mask_wave += (wave > wave_window[window_idx, 0]) & (wave < wave_window[window_idx, 1])
 
+        return mask_wave
+
+    @staticmethod
+    def get_line_mask(wave, line, vel_kmps, target, instrument='muse', blue_limit=30., red_limit=30.):
+        if line in (6550, 6565, 6585):
+            nii_6550_observed_line = SpecHelper.get_obs_line_pos(line=6550, vel_kmps=vel_kmps, target=target,
+                                                            instrument=instrument)
+            nii_6585_observed_line = SpecHelper.get_obs_line_pos(line=6585, vel_kmps=vel_kmps, target=target,
+                                                            instrument=instrument)
+            return (wave > (nii_6550_observed_line - blue_limit)) & \
+                (wave < nii_6585_observed_line + red_limit)
+        elif line in (6718, 6733):
+            sii_6718_observed_line = SpecHelper.get_obs_line_pos(line=6718, vel_kmps=vel_kmps, target=target,
+                                                            instrument=instrument)
+            sii_6733_observed_line = SpecHelper.get_obs_line_pos(line=6733, vel_kmps=vel_kmps, target=target,
+                                                            instrument=instrument)
+            return (wave > (sii_6718_observed_line - blue_limit)) & \
+                (wave < sii_6733_observed_line + red_limit)
+        else:
+            obs_line = SpecHelper.get_obs_line_pos(line=line, vel_kmps=vel_kmps, target=target, instrument=instrument)
+            return (wave > (obs_line - blue_limit)) & \
+                (wave < obs_line + red_limit)
+
+    @staticmethod
+    def get_multiple_line_mask(wave, ln_list, vel_kmps, target, instrument='muse', blue_limit=30., red_limit=30.):
+
+        multi_line_mask = np.zeros(len(wave), dtype=bool)
+        if ln_list is None:
+            ln_list = [4863, 4960, 5008, 6302, 6550, 6565, 6585, 6718, 6733]
+
+        for line in ln_list:
+            multi_line_mask += SpecHelper.get_line_mask(wave=wave, line=line, vel_kmps=vel_kmps, target=target,
+                                                       instrument=instrument,
+                                                       blue_limit=blue_limit, red_limit=red_limit)
+
+        return multi_line_mask
+
+
+
+
+
+
+
+
+
+
+
+    ############################################
+    #### older functions soon to be deleted ####
+    ############################################
+
+    @staticmethod
+    def conv_helio_cen_vel2obs_line_wave(vel, line, line_ref='vac_wave'):
+        """
+        Function to get the position of a line based on redshift or velocity
+
+        Parameters
+        ----------
+        line : int or str
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astropy quantity the unit km/s will be assumed
+        target : str
+        redshift : float
+        instrument : str
+        wave_ref : str
+
+        Returns
+        -------
+        obs_wave : ``astropy.units.Quantity``
+            wavelength is units of angstrom
+        """
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+
+        return phys_params.spec_line_dict[line][line_ref] + SpecHelper.conv_vel2delta_wave(
+            line=line, vel=vel.to(u.km / u.s), line_ref=line_ref)
+
+    @staticmethod
+    def conv_obs_line_wave2helio_cen_vel(obs_line_wave, line, vel_unit='kmps', line_ref='vac_wave'):
+        """
+        Function to get the position of a line based on redshift or velocity
+
+        Parameters
+        ----------
+        obs_line_wave : float or ``astropy.units.Quantity``
+            important: assuming units of Angstrom if not specified
+        line : int or str
+        target : str
+        redshift : float
+        instrument : str
+        wave_ref : str
+
+        Returns
+        -------
+        vel : ``astropy.units.Quantity``
+            wavelength is units of km / s
+        """
+
+        if not isinstance(obs_line_wave, u.Quantity):
+            obs_line_wave *= (u.Angstrom)
+
+        line_offset = obs_line_wave.to(u.Angstrom) - phys_params.spec_line_dict[line][line_ref]
+        return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=line_offset, line_ref=line_ref)
+
+    @staticmethod
+    def get_obs_line_pos_old(line, vel=None, target=None, redshift=None, instrument='muse', wave_ref=None):
+        """
+        Function to get the position of a line based on redshift or velocity
+
+        Parameters
+        ----------
+        line : int or str
+        vel : float or ``astropy.units.Quantity``
+            important: if the velocity has no astropy quantity the unit km/s will be assumed
+        target : str
+        redshift : float
+        instrument : str
+        wave_ref : str
+
+        Returns
+        -------
+        obs_wave : ``astropy.units.Quantity``
+            wavelength is units of angstrom
+        """
+
+        if vel is None:
+            vel = SpecHelper.get_target_sys_vel(target=target, redshift=redshift)
+        if not isinstance(vel, u.Quantity):
+            vel *= (u.km / u.s)
+
+        if wave_ref is None:
+            wave_ref = SpecHelper.instrument2wave_ref(instrument=instrument)
+
+        return SpecHelper.rest_wave2obs_wave(rest_wave=phys_params.spec_line_dict[line][wave_ref],
+                                                 vel=vel.to(u.km / u.s))
+
+    @staticmethod
+    def get_inst_broad_sig(line, instrument='muse', return_value='vel', wave_ref=None):
+        """
+        Function to get instrumental broadening
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        !!!! To Do: add further instruments !!!!
+        !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        Parameters
+        ----------
+        line : int or str
+        instrument : str
+        return_value : str
+        wave_ref : str
+        Returns
+        -------
+        inst_broad: ``astropy.units.Quantity``
+        """
+
+        assert (instrument in ['muse', 'manga', 'sdss'])
+        assert (return_value in ['vel', 'wave'])
+        if wave_ref is None:
+            wave_ref = SpecHelper.instrument2wave_ref(instrument=instrument)
+        if instrument == 'muse':
+            wave = phys_params.spec_line_dict[line][wave_ref]
+            inst_broad_sig = (get_MUSE_polyFWHM(x=wave) / (2 * np.sqrt(2 * np.log(2)))) * u.Angstrom
+            if return_value == 'wave':
+                return inst_broad_sig
+            elif return_value in ['vel']:
+                return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=inst_broad_sig, line_ref=wave_ref)
+        else:
+            raise KeyError(instrument, ' not understand')
 
     @staticmethod
     def compute_gauss(x_data, line, amp, mu_vel, sig_vel, vel_unit='kmps', line_ref='vac_wave'):
@@ -425,17 +645,6 @@ class SpecHelper:
         sig_obs_vel = np.sqrt(sig_int_vel ** 2 + sig_inst_broad_vel ** 2)
         return SpecHelper.compute_gauss(x_data=x_data, line=line, amp=amp, mu_vel=mu_vel, sig_vel=sig_obs_vel,
                                        vel_unit=vel_unit, line_ref=SpecHelper.instrument2wave_ref(instrument=instrument))
-
-    @staticmethod
-    def wave_window2mask(wave, wave_window):
-        if isinstance(wave_window, tuple):
-            mask_wave = (wave > wave_window[0]) & (wave < wave_window[1])
-        else:
-            mask_wave = np.zeros(len(wave), dtype=bool)
-            for window_idx in range(wave_window.shape[0]):
-                mask_wave += (wave > wave_window[window_idx, 0]) & (wave < wave_window[window_idx, 1])
-
-        return mask_wave
 
     @staticmethod
     def compute_ew(wave, flux, flux_err, line_window, continuum_window):
@@ -490,41 +699,6 @@ class SpecHelper:
                        }
 
         return return_dict
-
-    @staticmethod
-    def get_line_mask(wave, line, vel_kmps, target, instrument='muse', blue_limit=30., red_limit=30.):
-        if line in (6550, 6565, 6585):
-            nii_6550_observed_line = SpecHelper.get_line_pos(line=6550, vel_kmps=vel_kmps, target=target,
-                                                            instrument=instrument)
-            nii_6585_observed_line = SpecHelper.get_line_pos(line=6585, vel_kmps=vel_kmps, target=target,
-                                                            instrument=instrument)
-            return (wave > (nii_6550_observed_line - blue_limit)) & \
-                (wave < nii_6585_observed_line + red_limit)
-        elif line in (6718, 6733):
-            sii_6718_observed_line = SpecHelper.get_line_pos(line=6718, vel_kmps=vel_kmps, target=target,
-                                                            instrument=instrument)
-            sii_6733_observed_line = SpecHelper.get_line_pos(line=6733, vel_kmps=vel_kmps, target=target,
-                                                            instrument=instrument)
-            return (wave > (sii_6718_observed_line - blue_limit)) & \
-                (wave < sii_6733_observed_line + red_limit)
-        else:
-            obs_line = SpecHelper.get_line_pos(line=line, vel_kmps=vel_kmps, target=target, instrument=instrument)
-            return (wave > (obs_line - blue_limit)) & \
-                (wave < obs_line + red_limit)
-
-    @staticmethod
-    def get_multiple_line_mask(wave, ln_list, vel_kmps, target, instrument='muse', blue_limit=30., red_limit=30.):
-
-        multi_line_mask = np.zeros(len(wave), dtype=bool)
-        if ln_list is None:
-            ln_list = [4863, 4960, 5008, 6302, 6550, 6565, 6585, 6718, 6733]
-
-        for line in ln_list:
-            multi_line_mask += SpecHelper.get_line_mask(wave=wave, line=line, vel_kmps=vel_kmps, target=target,
-                                                       instrument=instrument,
-                                                       blue_limit=blue_limit, red_limit=red_limit)
-
-        return multi_line_mask
 
 
 class PpxfTools:
@@ -597,32 +771,294 @@ class PpxfTools:
 
         return stellar_template_dict
 
+
+    @staticmethod
+    def custom_ppxf_emission_lines(ln_lam_temp, lam_range_gal, fwhm_gal, pixel=True,
+                                   tie_balmer=False, limit_doublets=False, vacuum=False, line_list=None):
+        """
+
+        Generates an array of Gaussian emission lines to be used as gas templates in pPXF.
+
+        ****************************************************************************
+
+        **ADDITIONAL LINES CAN BE ADDED BY EDITING THE CODE OF THIS PROCEDURE, WHICH
+        IS MEANT AS A TEMPLATE TO BE COPIED AND MODIFIED BY THE USERS AS NEEDED**
+
+        ** THIS CODE HAS BEEN EDITED FROM THE ORIGINAL **
+
+
+        ****************************************************************************
+
+        Generally, these templates represent the instrumental line spread function
+        (LSF) at the set of wavelengths of each emission line. In this case, pPXF
+        will return the intrinsic (i.e. astrophysical) dispersion of the gas lines.
+
+        Alternatively, one can input fwhm_gal=0, in which case the emission lines
+        are delta-functions and pPXF will return a dispersion which includes both
+        the instrumental and the intrinsic dispersion.
+
+        For accuracy the Gaussians are integrated over the pixels boundaries.
+        This can be changed by setting `pixel`=False.
+
+        The [OI], [OIII] and [NII] doublets are fixed at theoretical flux ratio~3.
+
+        The [OII] and [SII] doublets can be restricted to physical range of ratios.
+
+        The Balmer Series can be fixed to the theoretically predicted decrement.
+
+        Parameters
+        ----------
+        ln_lam_temp: array_like
+            is the natural log of the wavelength of the templates in Angstrom.
+            ``ln_lam_temp`` should be the same as that of the stellar templates.
+        lam_range_gal: array_like
+            is the estimated rest-frame fitted wavelength range. Typically::
+
+                lam_range_gal = np.array([np.min(wave), np.max(wave)])/(1 + z),
+
+            where wave is the observed wavelength of the fitted galaxy pixels and
+            z is an initial rough estimate of the galaxy redshift.
+        fwhm_gal: float, func or dict
+            Instrumental resolution FWHM of the galaxy spectrum under study in
+            Angstrom. One can pass either:
+                * A scalar;
+                * The name "func" of a function ``func(wave)`` which returns the
+                  FWHM for a given vector of input wavelengths in Angstrom;
+                * A dictionary ``{"lam":lam, "fwhm":fwhm}`` with the wavelength and
+                  corresponding instrumental resolution of every pixel of the
+                  galaxy spectrum in Angstroms.
+        pixel: bool, optional
+            Set this to ``False`` to ignore pixels integration (default ``True``).
+        tie_balmer: bool, optional
+            Set this to ``True`` to tie the Balmer lines according to a theoretical
+            decrement (case B recombination T=1e4 K, n=100 cm^-3).
+
+            IMPORTANT: The relative fluxes of the Balmer components assumes the
+            input spectrum has units proportional to ``erg/(cm**2 s A)``.
+        limit_doublets: bool, optional
+            Set this to True to limit the ratio of the [OII] and [SII] doublets to
+            the ranges allowed by atomic physics.
+
+            An alternative to this keyword is to use the ``constr_templ`` keyword
+            of pPXF to constrain the ratio of two templates weights.
+
+            IMPORTANT: when using this keyword, the two output fluxes (flux_1 and
+            flux_2) provided by pPXF for the two lines of the doublet, do *not*
+            represent the actual fluxes of the two lines, but the fluxes of the two
+            input *doublets* of which the fit is a linear combination.
+            If the two doublets templates have line ratios rat_1 and rat_2, and
+            pPXF prints fluxes flux_1 and flux_2, the actual ratio and flux of the
+            fitted doublet will be::
+
+                flux_total = flux_1 + flux_1
+                ratio_fit = (rat_1*flux_1 + rat_2*flux_2)/flux_total
+
+            EXAMPLE: For the [SII] doublet, the adopted ratios for the templates are::
+
+                ratio_d1 = flux([SII]6716/6731) = 0.44
+                ratio_d2 = flux([SII]6716/6731) = 1.43.
+
+            When pPXF prints (and returns in pp.gas_flux)::
+
+                flux([SII]6731_d1) = flux_1
+                flux([SII]6731_d2) = flux_2
+
+            the total flux and true lines ratio of the [SII] doublet are::
+
+                flux_total = flux_1 + flux_2
+                ratio_fit([SII]6716/6731) = (0.44*flux_1 + 1.43*flux_2)/flux_total
+
+            Similarly, for [OII], the adopted ratios for the templates are::
+
+                ratio_d1 = flux([OII]3729/3726) = 0.28
+                ratio_d2 = flux([OII]3729/3726) = 1.47.
+
+            When pPXF prints (and returns in pp.gas_flux)::
+
+                flux([OII]3726_d1) = flux_1
+                flux([OII]3726_d2) = flux_2
+
+            the total flux and true lines ratio of the [OII] doublet are::
+
+                flux_total = flux_1 + flux_2
+                ratio_fit([OII]3729/3726) = (0.28*flux_1 + 1.47*flux_2)/flux_total
+
+        vacuum:  bool, optional
+            set to ``True`` to assume wavelengths are given in vacuum.
+            By default the wavelengths are assumed to be measured in air.
+
+        Returns
+        -------
+        emission_lines: ndarray
+            Array of dimensions ``[ln_lam_temp.size, line_wave.size]`` containing
+            the gas templates, one per array column.
+
+        line_names: ndarray
+            Array of strings with the name of each line, or group of lines'
+
+        line_wave: ndarray
+            Central wavelength of the lines, one for each gas template'
+
+        """
+
+        if isinstance(fwhm_gal, dict):
+            fwhm_gal1 = lambda lam: np.interp(lam, fwhm_gal["lam"], fwhm_gal["fwhm"])
+        else:
+            fwhm_gal1 = fwhm_gal
+
+        #        Balmer:     H10       H9         H8        Heps    Hdelta    Hgamma    Hbeta     Halpha
+        balmer = np.array([3798.983, 3836.479, 3890.158, 3971.202, 4102.899, 4341.691, 4862.691, 6564.632])  # vacuum wavelengths
+
+        if tie_balmer:
+
+            # Balmer decrement for Case B recombination (T=1e4 K, ne=100 cm^-3)
+            # from Storey & Hummer (1995) https://ui.adsabs.harvard.edu/abs/1995MNRAS.272...41S
+            # In electronic form https://cdsarc.u-strasbg.fr/viz-bin/Cat?VI/64
+            # See Table B.7 of Dopita & Sutherland (2003) https://www.amazon.com/dp/3540433627
+            # Also see Table 4.2 of Osterbrock & Ferland (2006) https://www.amazon.co.uk/dp/1891389343/
+            wave = balmer
+            if not vacuum:
+                wave = util.vac_to_air(wave)
+            gauss = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel)
+            ratios = np.array([0.0530, 0.0731, 0.105, 0.159, 0.259, 0.468, 1, 2.86])
+            # Account for varying log-sampled pixel size in Angstrom
+            ratios *= wave[-2]/wave
+            emission_lines = gauss @ ratios
+            line_names = ['Balmer']
+            w = (lam_range_gal[0] < wave) & (wave < lam_range_gal[1])
+            line_wave = np.mean(wave[w]) if np.any(w) else np.mean(wave)
+
+        else:
+
+            line_wave = balmer
+            if not vacuum:
+                line_wave = util.vac_to_air(line_wave)
+            line_names = ['H10', 'H9', 'H8', 'Heps', 'Hdelta', 'Hgamma', 'Hbeta', 'Halpha']
+            emission_lines = util.gaussian(ln_lam_temp, line_wave, fwhm_gal1, pixel)
+
+        if limit_doublets:
+
+            # The line ratio of this doublet lam3727/lam3729 is constrained by
+            # atomic physics to lie in the range 0.28--1.47 (e.g. fig.5.8 of
+            # Osterbrock & Ferland (2006) https://www.amazon.co.uk/dp/1891389343/).
+            # We model this doublet as a linear combination of two doublets with the
+            # maximum and minimum ratios, to limit the ratio to the desired range.
+            #       -----[OII]-----
+            wave = [3727.092, 3729.875]    # vacuum wavelengths
+            if not vacuum:
+                wave = util.vac_to_air(wave)
+            names = ['[OII]3726_d1', '[OII]3726_d2']
+            gauss = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel)
+            doublets = gauss @ [[1, 1], [0.28, 1.47]]  # produces *two* doublets
+            emission_lines = np.column_stack([emission_lines, doublets])
+            line_names = np.append(line_names, names)
+            line_wave = np.append(line_wave, wave)
+
+            # The line ratio of this doublet lam6717/lam6731 is constrained by
+            # atomic physics to lie in the range 0.44--1.43 (e.g. fig.5.8 of
+            # Osterbrock & Ferland (2006) https://www.amazon.co.uk/dp/1891389343/).
+            # We model this doublet as a linear combination of two doublets with the
+            # maximum and minimum ratios, to limit the ratio to the desired range.
+            #        -----[SII]-----
+            wave = [6718.294, 6732.674]    # vacuum wavelengths
+            if not vacuum:
+                wave = util.vac_to_air(wave)
+            names = ['[SII]6731_d1', '[SII]6731_d2']
+            gauss = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel)
+            doublets = gauss @ [[0.44, 1.43], [1, 1]]  # produces *two* doublets
+            emission_lines = np.column_stack([emission_lines, doublets])
+            line_names = np.append(line_names, names)
+            line_wave = np.append(line_wave, wave)
+
+        else:
+
+            # Here the two doublets are free to have any ratio
+            #         -----[OII]-----     -----[SII]-----
+            wave = [3727.092, 3729.875, 6718.294, 6732.674]  # vacuum wavelengths
+            if not vacuum:
+                wave = util.vac_to_air(wave)
+            names = ['[OII]3726', '[OII]3729', '[SII]6716', '[SII]6731']
+            gauss = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel)
+            emission_lines = np.column_stack([emission_lines, gauss])
+            line_names = np.append(line_names, names)
+            line_wave = np.append(line_wave, wave)
+
+        # Here the lines are free to have any ratio
+        #       -----[NeIII]-----    HeII      HeI
+        wave = [3968.59, 3869.86, 4687.015, 5877.243]  # vacuum wavelengths
+        if not vacuum:
+            wave = util.vac_to_air(wave)
+        names = ['[NeIII]3968', '[NeIII]3869', 'HeII4687', 'HeI5876']
+        gauss = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel)
+        emission_lines = np.column_stack([emission_lines, gauss])
+        line_names = np.append(line_names, names)
+        line_wave = np.append(line_wave, wave)
+
+        ######### Doublets with fixed ratios #########
+
+        # To keep the flux ratio of a doublet fixed, we place the two lines in a single template
+        #        -----[OIII]-----
+        wave = [4960.295, 5008.240]    # vacuum wavelengths
+        if not vacuum:
+            wave = util.vac_to_air(wave)
+        doublet = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel) @ [0.33, 1]
+        emission_lines = np.column_stack([emission_lines, doublet])
+        # single template for this doublet
+        line_names = np.append(line_names, '[OIII]5007_d')
+        line_wave = np.append(line_wave, wave[1])
+
+        # To keep the flux ratio of a doublet fixed, we place the two lines in a single template
+        #        -----[OI]-----
+        wave = [6302.040, 6365.535]    # vacuum wavelengths
+        if not vacuum:
+            wave = util.vac_to_air(wave)
+        doublet = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel) @ [1, 0.33]
+        emission_lines = np.column_stack([emission_lines, doublet])
+        # single template for this doublet
+        line_names = np.append(line_names, '[OI]6300_d')
+        line_wave = np.append(line_wave, wave[0])
+
+        # To keep the flux ratio of a doublet fixed, we place the two lines in a single template
+        #       -----[NII]-----
+        wave = [6549.860, 6585.271]    # air wavelengths
+        if not vacuum:
+            wave = util.vac_to_air(wave)
+        doublet = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel) @ [0.33, 1]
+        emission_lines = np.column_stack([emission_lines, doublet])
+
+        # single template for this doublet
+        line_names = np.append(line_names, '[NII]6583_d')
+        line_wave = np.append(line_wave, wave[1])
+
+        # Only include lines falling within the estimated fitted wavelength range.
+        #
+        w = (lam_range_gal[0] < line_wave) & (line_wave < lam_range_gal[1])
+        emission_lines = emission_lines[:, w]
+        line_names = line_names[w]
+        line_wave = line_wave[w]
+
+        print('Emission lines included in gas templates:')
+        print(line_names)
+
+        return emission_lines, line_names, line_wave
+
+
     @staticmethod
     def prepare_ppxf_fit_comp_dict(
             spec_dict,
-            sys_vel=None, target_name=None,
+            target_name=None,
             # kinematic components
             n_star_comp=1,
-            sps_name='fsps', age_range=None, metal_range=None, norm_range=[5070, 5950],
+            sps_name='fsps', age_range=None, metal_range=None, norm_range=None,
             vel_init_offset_star=0, vel_bound_lo_star=-500, vel_bound_hi_star=500,
             init_vel_sig_star=100, sigma_bound_lo_star=0, sigma_bound_hi_star=500,
             allow_asym_star=True,
+            h3_init_star=0, h3_bound_lo_star=-0.7, h3_bound_hi_star=0.7,
+            h4_init_star=0, h4_bound_lo_star=-0.7, h4_bound_hi_star=0.7,
+            init_dust_av_star=0.5, bound_dust_av_lo_star=0, bound_dust_av_hi_star=4,
             # gas components
-            # all lines
-            n_all_lines=1,
-            vel_init_offset_all_lines=0, vel_bound_lo_all_lines=-500, vel_bound_hi_all_lines=500,
-            init_vel_sig_all_lines=100, sigma_bound_lo_all_lines=0, sigma_bound_hi_all_lines=500,
-            allow_asym_all_lines=True,
-            # only allowed lines
-            n_only_allowed=0,
-            vel_init_offset_only_allowed=0, vel_bound_lo_only_allowed=-500, vel_bound_hi_only_allowed=500,
-            init_vel_sig_only_allowed=100, sigma_bound_lo_only_allowed=0, sigma_bound_hi_only_allowed=500,
-            allow_asym_only_allowed=True,
-            # only forbidden lines
-            n_only_forbidden=0,
-            vel_init_offset_only_forbidden=0, vel_bound_lo_only_forbidden=-500, vel_bound_hi_only_forbidden=500,
-            init_vel_sig_only_forbidden=100, sigma_bound_lo_only_forbidden=0, sigma_bound_hi_only_forbidden=500,
-            allow_asym_only_forbidden=True,
+            gas_line_comp_dict=None,
+
     ):
 
         """
@@ -631,7 +1067,6 @@ class PpxfTools:
         ----------
         general parameters
         spec_dict : dict
-        sys_vel : float
         target_name : str
 
         parameters for the stellar component
@@ -653,47 +1088,72 @@ class PpxfTools:
         -------
         dict
         """
+        # specify the range where to norm the spectrum
+        if norm_range is None:
+            norm_range = [5070, 5950]
 
-        if (target_name is None) & (sys_vel is None):
-            raise KeyError(
-                'in order to estimate a redshift / systematic velocity either ``target_name`` or ``sys_vel`` '
-                'has to be provided')
-
-        if (target_name is not None) & (sys_vel is None):
+        # we need asystematic velocity estimation
+        if 'sys_vel' in spec_dict.keys():
+            sys_vel = spec_dict['sys_vel']
+            if 'redshift' in spec_dict.keys():
+                redshift = spec_dict['redshift']
+            else:
+                redshift = SpecHelper.vel2redshift(vel=sys_vel)
+        elif 'redshift' in spec_dict.keys():
+            redshift = spec_dict['redshift']
+            sys_vel = SpecHelper.get_target_sys_vel(redshift=redshift)
+        elif target_name is not None:
             sys_vel = SpecHelper.get_target_sys_vel(target=target_name)
-        # get redshift
-        redshift = SpecHelper.vel2redshift(vel=sys_vel)
+            redshift = SpecHelper.vel2redshift(vel=sys_vel)
+        else:
+            raise KeyError(
+                'in order to estimate a redshift / systematic velocity either ``target_name`` must be given or '
+                ' ``sys_vel`` or ``redshift`` must be provided in ``spec_dict``')
 
+        print('sys_vel ', sys_vel)
+
+        ##########################
+        #### rebin wavelength ####
+        ##########################
+        (ln_rebin_ln_wave, ln_rebin_lin_wave, ln_rebin_spec_flx, ln_rebin_spec_flx_err,
+         ln_rebin_velscale_kmps_per_pix) = (
+            SpecHelper.log_rebin_spec_data(
+                wave=spec_dict['native_wave'],
+                spec_flx=spec_dict['native_spec_flx'],
+                spec_flx_err=spec_dict['native_spec_flx_err']))
+
+
+
+        ln_rebin_good_pixel_mask = np.invert(np.isnan(ln_rebin_spec_flx) + np.isinf(ln_rebin_spec_flx) +
+                                             np.isnan(ln_rebin_spec_flx_err) + np.isinf(ln_rebin_spec_flx_err))
+
+
+        ln_rebin_lin_wave_range = [np.nanmin(ln_rebin_lin_wave), np.nanmax(ln_rebin_lin_wave)]
+        wave_unit = spec_dict['native_wave'].unit
+        spec_unit = spec_dict['native_spec_flx'].unit
+
+
+        ##########################
+        #### stellar template ####
+        ##########################
         # To Do: add the possibility of multiple stellar components #
         if n_star_comp > 1:
             raise NotImplementedError('Not yet implemented to have more than 1 stellar component!')
-
-        # get rebinned wavelength
-        # for further computation we also compute a rebinned spectrum for
-        ln_rebin_ln_wave, ln_rebin_lin_wave, ln_rebin_spec_flx, ln_rebin_spec_flx_err, ln_rebin_velscale_kmps_per_pix = (
-            SpecHelper.log_rebin_spec_data(wave=spec_dict['native_wave'], spec_flx=spec_dict['native_spec_flx'],
-                                                     spec_flx_err=spec_dict['native_spec_flx_err']))
-        ln_rebin_good_pixel_mask = np.invert(np.isnan(ln_rebin_spec_flx) + np.isinf(ln_rebin_spec_flx))
-        ln_rebin_lin_wave_range = [np.nanmin(ln_rebin_lin_wave), np.nanmax(ln_rebin_lin_wave)]
-
-        # get stellar template
         stellar_template_dict = PpxfTools.get_stellar_template(
             velscale_kmps_per_pix=ln_rebin_velscale_kmps_per_pix,
             lsf_dict={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value}, age_range=age_range,
             metal_range=metal_range, sps_name=sps_name, norm_range=norm_range)
-
         n_star_temps = stellar_template_dict['stars_templates'].shape[1]
         # make a list of all components that will enter the ppxf fit
         component = [0] * n_star_temps
 
         # get kinematic start values and boundaries
         if allow_asym_star:
-            start_star = [sys_vel.value + vel_init_offset_star, init_vel_sig_star, 0, 0]
+            start_star = [sys_vel.value + vel_init_offset_star, init_vel_sig_star, h3_init_star, h4_init_star]
             moments = [4]
             bounds_stars = [[sys_vel.value + vel_bound_lo_star, sys_vel.value + vel_bound_hi_star],
                             [sigma_bound_lo_star, sigma_bound_hi_star],
-                            [-0.3, 0.3], [-0.3, 0.3]]
-
+                            [h3_bound_lo_star, h3_bound_hi_star], [h4_bound_lo_star, h4_bound_hi_star]]
         else:
             start_star = [sys_vel.value + vel_init_offset_star, init_vel_sig_star]
             moments = [2]
@@ -702,13 +1162,12 @@ class PpxfTools:
         start = [start_star]
         bounds = [bounds_stars]
 
-        # Now add gas component
-        # get standard gas template
-        # To Do: add a more customizable version of the emission line template
-        standard_gas_templates, standard_gas_names, standard_line_wave = util.emission_lines(
-            ln_lam_temp=stellar_template_dict['ln_wave_sps_temp'], lam_range_gal=ln_rebin_lin_wave_range,
-            FWHM_gal={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value}, limit_doublets=False,
-            tie_balmer=True, )
+        ########################
+        #### Gas Components ####
+        ########################
+        # get the dict to specify all lines
+        if gas_line_comp_dict is None:
+            gas_line_comp_dict = standard_gas_line_comp_dict
 
         # Note: this should be 1 unless the stellar continuum is fitted with multiple components
         current_gas_comp = n_star_comp
@@ -716,107 +1175,244 @@ class PpxfTools:
         gas_names = []
         line_wave = []
 
-        # go through all individual components
-        # go through all lines
-        for gas_comp_idx in range(n_all_lines):
-            # get starting values and specify number of moments
-            if allow_asym_all_lines:
-                start_gas = [sys_vel.value + vel_init_offset_all_lines, init_vel_sig_all_lines, 0, 0]
-                moments_gas = 4
-                bounds_gas = [[sys_vel.value + vel_bound_lo_all_lines, sys_vel.value + vel_bound_hi_all_lines],
-                              [sigma_bound_lo_all_lines, sigma_bound_hi_all_lines],
-                              [-0.3, 0.3], [-0.3, 0.3]]
-            else:
-                start_gas = [sys_vel.value + vel_init_offset_all_lines, init_vel_sig_all_lines]
-                moments_gas = 2
-                bounds_gas = [[sys_vel.value + vel_bound_lo_all_lines, sys_vel.value + vel_bound_hi_all_lines],
-                              [sigma_bound_lo_all_lines, sigma_bound_hi_all_lines]]
-            start.append(start_gas)
-            moments.append(moments_gas)
-            bounds.append(bounds_gas)
+        # kinematic components with custom line list
+        if gas_line_comp_dict['n_custom_lines'] > 0:
 
-            # add each individual gas component
-            for gas_line_idx in range(len(standard_gas_names)):
-                if gas_templates is None:
-                    gas_templates = standard_gas_templates[:, gas_line_idx]
+            gas_templates_custom_lines, gas_names_custom_lines, line_wave_custom_lines = (
+                PpxfTools.custom_ppxf_emission_lines(
+                    ln_lam_temp=stellar_template_dict['ln_wave_sps_temp'], lam_range_gal=ln_rebin_lin_wave_range,
+                    fwhm_gal={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value},
+                    limit_doublets=gas_line_comp_dict['limit_doublets_custom_lines'],
+                    tie_balmer=gas_line_comp_dict['tie_hydrogen_custom_lines'], vacuum=spec_dict['nativ_wave_vaccum']))
+
+            # go through all individual components
+            for gas_comp_idx in range(gas_line_comp_dict['n_custom_lines']):
+                print('gas_comp_idx ', gas_comp_idx)
+                # get starting values and specify number of moments
+                if gas_line_comp_dict['allow_asym_custom_lines']:
+                    start_gas = [sys_vel.value + gas_line_comp_dict['vel_init_offset_custom_lines'],
+                                 gas_line_comp_dict['init_vel_sig_custom_lines'],
+                                 gas_line_comp_dict['h3_init_custom_lines'],
+                                 gas_line_comp_dict['h4_init_custom_lines']]
+                    moments_gas = 4
+                    bounds_gas = [[sys_vel.value + gas_line_comp_dict['vel_bound_lo_custom_lines'],
+                                   sys_vel.value + gas_line_comp_dict['vel_bound_hi_custom_lines']],
+                                  [gas_line_comp_dict['sigma_bound_lo_custom_lines'],
+                                   gas_line_comp_dict['sigma_bound_hi_custom_lines']],
+                                  [gas_line_comp_dict['h3_bound_lo_custom_lines'],
+                                   gas_line_comp_dict['h3_bound_hi_custom_lines']],
+                                  [gas_line_comp_dict['h4_bound_lo_custom_lines'],
+                                   gas_line_comp_dict['h4_bound_hi_custom_lines']]]
                 else:
-                    gas_templates = np.vstack([gas_templates, standard_gas_templates[:, gas_line_idx]])
-                gas_names.append(standard_gas_names[gas_line_idx] + '_(%i)' % current_gas_comp)
-                line_wave.append(standard_line_wave[gas_line_idx])
-                component.append(current_gas_comp)
-            # for the next line component use an individual gas component
-            current_gas_comp += 1
+                    start_gas = [sys_vel.value + gas_line_comp_dict['vel_init_offset_custom_lines'],
+                                 gas_line_comp_dict['init_vel_sig_custom_lines']]
+                    moments_gas = 2
+                    bounds_gas = [[sys_vel.value + gas_line_comp_dict['vel_bound_lo_custom_lines'],
+                                   sys_vel.value + gas_line_comp_dict['vel_bound_hi_custom_lines']],
+                                  [gas_line_comp_dict['sigma_bound_lo_custom_lines'],
+                                   gas_line_comp_dict['sigma_bound_hi_custom_lines']]]
+                start.append(start_gas)
+                moments.append(moments_gas)
+                bounds.append(bounds_gas)
 
-        # now loop over allowed only
-        for gas_comp_idx in range(n_only_allowed):
-            # get starting values and specify number of moments
-            if allow_asym_only_allowed:
-                start_gas = [sys_vel.value + vel_init_offset_only_allowed, init_vel_sig_only_allowed, 0, 0]
-                moments_gas = 4
-                bounds_gas = [[sys_vel.value + vel_bound_lo_only_allowed, sys_vel.value + vel_bound_hi_only_allowed],
-                              [sigma_bound_lo_only_allowed, sigma_bound_hi_only_allowed],
-                              [-0.3, 0.3], [-0.3, 0.3]]
-            else:
-                start_gas = [sys_vel.value + vel_init_offset_only_allowed, init_vel_sig_only_allowed]
-                moments_gas = 2
-                bounds_gas = [[sys_vel.value + vel_bound_lo_only_allowed, sys_vel.value + vel_bound_hi_only_allowed],
-                              [sigma_bound_lo_only_allowed, sigma_bound_hi_only_allowed]]
-            start.append(start_gas)
-            moments.append(moments_gas)
-            bounds.append(bounds_gas)
-
-            # add each individual gas component
-            for gas_line_idx in range(len(standard_gas_names)):
-                # if standard_gas_names[gas_line_idx][0] == '[': continue
-                if standard_gas_names[gas_line_idx][0] != 'B': continue
-                if gas_templates is None:
-                    gas_templates = standard_gas_templates[:, gas_line_idx]
+                # add each individual gas line
+                if gas_line_comp_dict['line_lists_custom_lines'][gas_comp_idx] is None:
+                    line_list_custom_lines = gas_names_custom_lines
                 else:
-                    gas_templates = np.vstack([gas_templates, standard_gas_templates[:, gas_line_idx]])
-                gas_names.append(standard_gas_names[gas_line_idx] + '_(%i)' % current_gas_comp)
-                line_wave.append(standard_line_wave[gas_line_idx])
-                component.append(current_gas_comp)
-            # for the next line component use an individual gas component
-            current_gas_comp += 1
+                    line_list_custom_lines = gas_line_comp_dict['line_lists_custom_lines'][gas_comp_idx]
+                for gas_line_idx in range(len(gas_names_custom_lines)):
+                    if gas_names_custom_lines[gas_line_idx] not in line_list_custom_lines:
+                        continue
+                    if gas_templates is None:
+                        gas_templates = gas_templates_custom_lines[:, gas_line_idx]
+                    else:
+                        gas_templates = np.vstack([gas_templates, gas_templates_custom_lines[:, gas_line_idx]])
+                    gas_names.append(gas_names_custom_lines[gas_line_idx] + '_(%i)' % current_gas_comp)
+                    line_wave.append(line_wave_custom_lines[gas_line_idx])
+                    component.append(current_gas_comp)
+                # for the next line component use an individual gas component
+                current_gas_comp += 1
 
-        # now loop over forbidden only
-        for gas_comp_idx in range(n_only_forbidden):
-            # get starting values and specify number of moments
-            if allow_asym_only_forbidden:
-                start_gas = [sys_vel.value + vel_init_offset_only_forbidden, init_vel_sig_only_forbidden, 0, 0]
-                moments_gas = 4
-                bounds_gas = [[sys_vel.value + vel_bound_lo_only_forbidden, sys_vel.value + vel_bound_hi_only_forbidden],
-                              [sigma_bound_lo_only_forbidden, sigma_bound_hi_only_forbidden],
-                              [-0.3, 0.3], [-0.3, 0.3]]
-            else:
-                start_gas = [sys_vel.value + vel_init_offset_only_forbidden, init_vel_sig_only_forbidden]
-                moments_gas = 2
-                bounds_gas = [[sys_vel.value + vel_bound_lo_only_forbidden, sys_vel.value + vel_bound_hi_only_forbidden],
-                              [sigma_bound_lo_only_forbidden, sigma_bound_hi_only_forbidden]]
-            start.append(start_gas)
-            moments.append(moments_gas)
-            bounds.append(bounds_gas)
+        # kinematic components with only allowed lines
+        if gas_line_comp_dict['n_only_allowed'] > 0:
 
-            # add each individual gas component
-            for gas_line_idx in range(len(standard_gas_names)):
-                if standard_gas_names[gas_line_idx][0] != '[': continue
-                if gas_templates is None:
-                    gas_templates = standard_gas_templates[:, gas_line_idx]
+            gas_templates_only_allowed, gas_names_only_allowed, line_wave_only_allowed = (
+                PpxfTools.custom_ppxf_emission_lines(
+                    ln_lam_temp=stellar_template_dict['ln_wave_sps_temp'], lam_range_gal=ln_rebin_lin_wave_range,
+                    fwhm_gal={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value},
+                    limit_doublets=False,
+                    tie_balmer=gas_line_comp_dict['tie_hydrogen_only_allowed'], vacuum=spec_dict['nativ_wave_vaccum']))
+
+            # go through all individual components
+            for gas_comp_idx in range(gas_line_comp_dict['n_only_allowed']):
+                # get starting values and specify number of moments
+                if gas_line_comp_dict['allow_asym_only_allowed']:
+                    start_gas = [sys_vel.value + gas_line_comp_dict['vel_init_offset_only_allowed'],
+                                 gas_line_comp_dict['init_vel_sig_only_allowed'],
+                                 gas_line_comp_dict['h3_init_only_allowed'],
+                                 gas_line_comp_dict['h4_init_only_allowed']]
+                    moments_gas = 4
+                    bounds_gas = [[sys_vel.value + gas_line_comp_dict['vel_bound_lo_only_allowed'],
+                                   sys_vel.value + gas_line_comp_dict['vel_bound_hi_only_allowed']],
+                                  [gas_line_comp_dict['sigma_bound_lo_only_allowed'],
+                                   gas_line_comp_dict['sigma_bound_hi_only_allowed']],
+                                  [gas_line_comp_dict['h3_bound_lo_only_allowed'],
+                                   gas_line_comp_dict['h3_bound_hi_only_allowed']],
+                                  [gas_line_comp_dict['h4_bound_lo_only_allowed'],
+                                   gas_line_comp_dict['h4_bound_hi_only_allowed']]]
                 else:
-                    gas_templates = np.vstack([gas_templates, standard_gas_templates[:, gas_line_idx]])
-                gas_names.append(standard_gas_names[gas_line_idx] + '_(%i)' % current_gas_comp)
-                line_wave.append(standard_line_wave[gas_line_idx])
-                component.append(current_gas_comp)
-            # for the next line component use an individual gas component
-            current_gas_comp += 1
+                    start_gas = [sys_vel.value + gas_line_comp_dict['vel_init_offset_only_allowed'],
+                                 gas_line_comp_dict['init_vel_sig_only_allowed']]
+                    moments_gas = 2
+                    bounds_gas = [[sys_vel.value + gas_line_comp_dict['vel_bound_lo_only_allowed'],
+                                   sys_vel.value + gas_line_comp_dict['vel_bound_hi_only_allowed']],
+                                  [gas_line_comp_dict['sigma_bound_lo_only_allowed'],
+                                   gas_line_comp_dict['sigma_bound_hi_only_allowed']]]
+                start.append(start_gas)
+                moments.append(moments_gas)
+                bounds.append(bounds_gas)
+
+                # add each individual gas line
+                if gas_line_comp_dict['line_lists_only_allowed'][gas_comp_idx] is None:
+                    line_list_only_allowed = gas_names_only_allowed
+                    for line_name in gas_names_only_allowed:
+                        if line_name[0] == '[':
+                            line_list_only_allowed = line_list_only_allowed[line_list_only_allowed != line_name]
+                else:
+                    line_list_only_allowed = gas_line_comp_dict['line_lists_only_allowed'][gas_comp_idx]
+                for gas_line_idx in range(len(gas_names_only_allowed)):
+                    if gas_names_only_allowed[gas_line_idx] not in line_list_only_allowed:
+                        continue
+                    if gas_templates is None:
+                        gas_templates = gas_templates_only_allowed[:, gas_line_idx]
+                    else:
+                        gas_templates = np.vstack([gas_templates, gas_templates_only_allowed[:, gas_line_idx]])
+                    gas_names.append(gas_names_only_allowed[gas_line_idx] + '_(%i)' % current_gas_comp)
+                    line_wave.append(line_wave_only_allowed[gas_line_idx])
+                    component.append(current_gas_comp)
+                # for the next line component use an individual gas component
+                current_gas_comp += 1
+
+        # kinematic components with only forbidden lines
+        if gas_line_comp_dict['n_only_forbidden'] > 0:
+
+            gas_templates_only_forbidden, gas_names_only_forbidden, line_wave_only_forbidden = (
+                PpxfTools.custom_ppxf_emission_lines(
+                    ln_lam_temp=stellar_template_dict['ln_wave_sps_temp'], lam_range_gal=ln_rebin_lin_wave_range,
+                    fwhm_gal={"lam": spec_dict['native_wave'].value, "fwhm": spec_dict['lsf_fwhm'].value},
+                    limit_doublets=gas_line_comp_dict['limit_doublets_only_forbidden'],
+                    tie_balmer=False, vacuum=spec_dict['nativ_wave_vaccum']))
+
+            # go through all individual components
+            for gas_comp_idx in range(gas_line_comp_dict['n_only_forbidden']):
+                # get starting values and specify number of moments
+                if gas_line_comp_dict['allow_asym_only_forbidden']:
+                    start_gas = [sys_vel.value + gas_line_comp_dict['vel_init_offset_only_forbidden'],
+                                 gas_line_comp_dict['init_vel_sig_only_forbidden'],
+                                 gas_line_comp_dict['h3_init_only_forbidden'],
+                                 gas_line_comp_dict['h4_init_only_forbidden']]
+                    moments_gas = 4
+                    bounds_gas = [[sys_vel.value + gas_line_comp_dict['vel_bound_lo_only_forbidden'],
+                                   sys_vel.value + gas_line_comp_dict['vel_bound_hi_only_forbidden']],
+                                  [gas_line_comp_dict['sigma_bound_lo_only_forbidden'],
+                                   gas_line_comp_dict['sigma_bound_hi_only_forbidden']],
+                                  [gas_line_comp_dict['h3_bound_lo_only_forbidden'],
+                                   gas_line_comp_dict['h3_bound_hi_only_forbidden']],
+                                  [gas_line_comp_dict['h4_bound_lo_only_forbidden'],
+                                   gas_line_comp_dict['h4_bound_hi_only_forbidden']]]
+                else:
+                    start_gas = [sys_vel.value + gas_line_comp_dict['vel_init_offset_only_forbidden'],
+                                 gas_line_comp_dict['init_vel_sig_only_forbidden']]
+                    moments_gas = 2
+                    bounds_gas = [[sys_vel.value + gas_line_comp_dict['vel_bound_lo_only_forbidden'],
+                                   sys_vel.value + gas_line_comp_dict['vel_bound_hi_only_forbidden']],
+                                  [gas_line_comp_dict['sigma_bound_lo_only_forbidden'],
+                                   gas_line_comp_dict['sigma_bound_hi_only_forbidden']]]
+                start.append(start_gas)
+                moments.append(moments_gas)
+                bounds.append(bounds_gas)
+
+                # add each individual gas line
+                if gas_line_comp_dict['line_lists_only_forbidden'][gas_comp_idx] is None:
+                    line_list_only_forbidden = gas_names_only_forbidden
+                    for line_name in gas_names_only_forbidden:
+                        if line_name[0] != '[':
+                            line_list_only_forbidden = line_list_only_forbidden[line_list_only_forbidden != line_name]
+                else:
+                    line_list_only_forbidden = gas_line_comp_dict['line_lists_only_forbidden'][gas_comp_idx]
+                for gas_line_idx in range(len(gas_names_only_forbidden)):
+                    if gas_names_only_forbidden[gas_line_idx] not in line_list_only_forbidden:
+                        continue
+                    if gas_templates is None:
+                        gas_templates = gas_templates_only_forbidden[:, gas_line_idx]
+                    else:
+                        gas_templates = np.vstack([gas_templates, gas_templates_only_forbidden[:, gas_line_idx]])
+                    gas_names.append(gas_names_only_forbidden[gas_line_idx] + '_(%i)' % current_gas_comp)
+                    line_wave.append(line_wave_only_forbidden[gas_line_idx])
+                    component.append(current_gas_comp)
+                # for the next line component use an individual gas component
+                current_gas_comp += 1
+
+        print('gas_names ', gas_names)
+        print('line_wave ', line_wave)
 
         # bring templates in correct form and combine them
         gas_templates = gas_templates.T
         templates = np.column_stack([stellar_template_dict['stars_templates'], gas_templates])
         # get mask of gas components
-        mask_gas_component = np.array(component) > (n_star_comp - 1)
+        mask_comp_stellar = np.array(component) <= (n_star_comp - 1)
+        mask_comp_custom_lines = ((np.array(component) > (n_star_comp - 1)) &
+                                  (np.array(component) <= (n_star_comp + gas_line_comp_dict['n_custom_lines']) - 1))
+        mask_comp_only_allowed = ((np.array(component) > (n_star_comp + gas_line_comp_dict['n_custom_lines'] - 1)) &
+                                  (np.array(component) <= (n_star_comp + gas_line_comp_dict['n_custom_lines'] +
+                                                           gas_line_comp_dict['n_only_allowed'] - 1)))
+        mask_comp_only_forbidden = ((np.array(component) > (n_star_comp + gas_line_comp_dict['n_custom_lines'] +
+                                                            gas_line_comp_dict['n_only_allowed'] - 1)) &
+                                    (np.array(component) <= (n_star_comp + gas_line_comp_dict['n_custom_lines'] +
+                                                             gas_line_comp_dict['n_only_allowed'] +
+                                                             gas_line_comp_dict['n_only_forbidden'] - 1)))
+
+        mask_gas_component = mask_comp_custom_lines + mask_comp_only_allowed + mask_comp_only_forbidden
+
+        ##########################
+        #### Dust attenuation ####
+        ##########################
+        # dust attenuation for star components
+        # To Do add individual attenuation laws for multiple stellar components
+        dust_stars = {"start": [init_dust_av_star],
+                      "bounds": [[bound_dust_av_lo_star, bound_dust_av_hi_star]],
+                      "component": mask_comp_stellar}
+        dust = [dust_stars]
+        # check if a general dust law is chosed for all gas lines
+        if gas_line_comp_dict['use_dust_law_all_gas_comp']:
+            dust.append({"start": [gas_line_comp_dict['init_dust_av_all_gas_comp']],
+                         "bounds": [[gas_line_comp_dict['bound_dust_av_lo_all_gas_comp'],
+                                     gas_line_comp_dict['bound_dust_av_hi_all_gas_comp']]],
+                         "component": mask_gas_component})
+        else:
+            if gas_line_comp_dict['n_custom_lines'] > 0:
+                if gas_line_comp_dict['use_dust_law_custom_lines']:
+                    dust.append({"start": [gas_line_comp_dict['init_dust_av_custom_lines']],
+                                 "bounds": [[gas_line_comp_dict['bound_dust_av_lo_custom_lines'],
+                                             gas_line_comp_dict['bound_dust_av_hi_custom_lines']]],
+                                 "component": mask_comp_custom_lines})
+            if gas_line_comp_dict['n_only_allowed'] > 0:
+                if gas_line_comp_dict['use_dust_law_only_allowed']:
+                    dust.append({"start": [gas_line_comp_dict['init_dust_av_only_allowed']],
+                                 "bounds": [[gas_line_comp_dict['bound_dust_av_lo_only_allowed'],
+                                             gas_line_comp_dict['bound_dust_av_hi_only_allowed']]],
+                                 "component": mask_comp_only_allowed})
+            if gas_line_comp_dict['n_only_forbidden'] > 0:
+                if gas_line_comp_dict['use_dust_law_only_forbidden']:
+                    dust.append({"start": [gas_line_comp_dict['init_dust_av_only_forbidden']],
+                                 "bounds": [[gas_line_comp_dict['bound_dust_av_lo_only_forbidden'],
+                                             gas_line_comp_dict['bound_dust_av_hi_only_forbidden']]],
+                                 "component": mask_comp_only_forbidden})
 
         ppxf_comp_dict = {
+            # general info of the spectrum
+            'sys_vel': sys_vel,
+            'redshift': redshift,
             # log-rebinned spectrum
             'ln_rebin_lin_wave_range': ln_rebin_lin_wave_range,
             'ln_rebin_ln_wave': ln_rebin_ln_wave,
@@ -825,6 +1421,8 @@ class PpxfTools:
             'ln_rebin_spec_flx_err': ln_rebin_spec_flx_err,
             'ln_rebin_velscale_kmps_per_pix': ln_rebin_velscale_kmps_per_pix,
             'ln_rebin_good_pixel_mask': ln_rebin_good_pixel_mask,
+            'wave_unit': wave_unit,
+            'spec_unit': spec_unit,
             # fit components
             'stellar_template_dict': stellar_template_dict,
             'templates': templates,
@@ -832,11 +1430,14 @@ class PpxfTools:
             'moments': moments,
             'start': start,
             'bounds': bounds,
-            'mask_gas_component': mask_gas_component,
             'gas_names': gas_names,
             'line_wave': line_wave,
-            'sys_vel': sys_vel,
-            'redshift': redshift,
+            'mask_comp_stellar': mask_comp_stellar,
+            'mask_comp_custom_lines': mask_comp_custom_lines,
+            'mask_comp_only_allowed': mask_comp_only_allowed,
+            'mask_comp_only_forbidden': mask_comp_only_forbidden,
+            'mask_gas_component': mask_gas_component,
+            'dust': dust,
         }
 
         return ppxf_comp_dict
@@ -849,8 +1450,6 @@ class PpxfTools:
             sys_vel=None,
             target_name=None,
             degree=4, mdegree=0,
-            init_star_dust_av=0.5, border_star_dust_av_lo=0, border_start_dus_av_hi=4,
-            init_gas_dust_av=0.5, border_gas_dust_av_lo=0, border_gast_dus_av_hi=8,
             # other params
             verbose_flag=True):
         """
@@ -884,20 +1483,6 @@ class PpxfTools:
             ppxf_comp_dict = PpxfTools.prepare_ppxf_fit_comp_dict(spec_dict=spec_dict, sys_vel=sys_vel,
                                                                   target_name=target_name, )
 
-        # get bounds for the dust attenuation
-        dust_gas_1 = {"start": [init_gas_dust_av],
-                      "bounds": [[border_gas_dust_av_lo, border_gast_dus_av_hi]],
-                      "component": np.array(ppxf_comp_dict['component']) == 1}
-
-        dust_gas_2 = {"start": [init_gas_dust_av],
-                      "bounds": [[border_gas_dust_av_lo, border_gast_dus_av_hi]],
-                      "component": np.array(ppxf_comp_dict['component']) == 2}
-
-        dust_stars = {"start": [init_star_dust_av],
-                      "bounds": [[border_star_dust_av_lo, border_start_dus_av_hi]],
-                      "component": ~ppxf_comp_dict['mask_gas_component']}
-        dust = [dust_gas_1, dust_gas_2, dust_stars]
-
         pp = ppxf(
             templates=ppxf_comp_dict['templates'],
             galaxy=ppxf_comp_dict['ln_rebin_spec_flx'], noise=ppxf_comp_dict['ln_rebin_spec_flx_err'],
@@ -910,50 +1495,13 @@ class PpxfTools:
             reg_dim=ppxf_comp_dict['stellar_template_dict']['n_age_n_met_sps_temp'],
             component=ppxf_comp_dict['component'],
             gas_component=ppxf_comp_dict['mask_gas_component'],
-            dust=dust,
+            dust=ppxf_comp_dict['dust'],
             gas_names=ppxf_comp_dict['gas_names'],
         )
 
-        # print(pp.dust)
-        # print(pp.dust[0]['sol'][0], pp.dust[1]['sol'][0], pp.dust[2]['sol'][0])
-        # pp.plot()
-        # plt.show()
-        #
-        light_weights = pp.weights[~ppxf_comp_dict['mask_gas_component']]  # Exclude weights of the gas templates
-        light_weights = light_weights.reshape(
-            ppxf_comp_dict['stellar_template_dict']['n_age_n_met_sps_temp'])  # Reshape to (n_ages, n_metal)
-        light_weights /= light_weights.sum()  # Normalize to light fractions
-
-        # plt.figure(figsize=(9, 3))
-        # ppxf_comp_dict['stellar_template_dict']['sps'].plot(light_weights)
-        # plt.title("Light Weights Fractions")
-        # plt.tight_layout()
-        # plt.show()
-
-        ages, met = ppxf_comp_dict['stellar_template_dict']['sps'].mean_age_metal(light_weights)
-        mass2light = ppxf_comp_dict['stellar_template_dict']['sps'].mass_to_light(light_weights,
-                                                                                  redshift=ppxf_comp_dict['redshift'])
-
-        wave = pp.lam
-        total_flux = pp.galaxy
-        total_flux_err = pp.noise
-
-        best_fit = pp.bestfit
-        gas_best_fit = pp.gas_bestfit
-        continuum_best_fit = best_fit - gas_best_fit
-
-        # get velocity of balmer component
-        sol_kin_comp = pp.sol[0]
-        balmer_kin_comp = pp.sol[1]
-        forbidden_kin_comp = pp.sol[2]
-
         ppxf_dict = {
-            'wave': wave, 'total_flux': total_flux, 'total_flux_err': total_flux_err,
-            'best_fit': best_fit, 'gas_best_fit': gas_best_fit, 'continuum_best_fit': continuum_best_fit,
-            'ages': ages, 'met': met, 'mass2light': mass2light,
             'pp': pp,
-            'star_red': pp.dust[0]['sol'][0], 'gas_red': pp.dust[1]['sol'][0],
-            'sol_kin_comp': sol_kin_comp, 'balmer_kin_comp': balmer_kin_comp, 'forbidden_kin_comp': forbidden_kin_comp,
+            'wave_unit': ppxf_comp_dict['wave_unit'], 'spec_unit': ppxf_comp_dict['spec_unit'],
             'sys_vel': sys_vel, 'redshift': ppxf_comp_dict['redshift'], 'rad_arcsec': spec_dict['rad_arcsec']
         }
 
@@ -1040,7 +1588,7 @@ class LineSpecFit:
     @staticmethod
     def estimate_line_amp(line, wave, em_flux, vel=None, target=None, redshift=None, instrument='muse', bin_rad=4):
         # get line position
-        line_pos = SpecHelper.get_line_pos(line=line, vel_kmps=vel, target=target, redshift=redshift,
+        line_pos = SpecHelper.get_obs_line_pos(line=line, vel_kmps=vel, target=target, redshift=redshift,
                                           instrument=instrument)
         # get wavelength steps
         # print(np.where(wave == np.wave - line_pos))
@@ -1390,11 +1938,11 @@ class LineSpecFit:
         line_caii_2 = 8544
         line_caii_3 = 8665
 
-        line_pos_caii_1 = SpecHelper.get_line_pos(line=line_caii_1, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
+        line_pos_caii_1 = SpecHelper.get_obs_line_pos(line=line_caii_1, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                  target=None, redshift=None, instrument='muse')
-        line_pos_caii_2 = SpecHelper.get_line_pos(line=line_caii_2, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
+        line_pos_caii_2 = SpecHelper.get_obs_line_pos(line=line_caii_2, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                  target=None, redshift=None, instrument='muse')
-        line_pos_caii_3 = SpecHelper.get_line_pos(line=line_caii_3, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
+        line_pos_caii_3 = SpecHelper.get_obs_line_pos(line=line_caii_3, vel_kmps=ppxf_fit_dict['sol_kin_comp'][0],
                                                  target=None, redshift=None, instrument='muse')
         # get the sizes of absorption lines
         sig_int_vel = ppxf_fit_dict['sol_kin_comp'][1]

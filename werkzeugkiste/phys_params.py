@@ -333,7 +333,7 @@ nirspec_gratings = {
 # hst
 # The aperture sizes are 4 pixels for each band. The background is estimated between 7 and 9 pixels
 # this is explained in Deger+2022 (2022MNRAS.510...32D)
-hst_aperture_rad_pix = {'F275W': 4, 'F336W': 4, 'F435W': 4, 'F438W': 4, 'F555W': 4,  'F547M': 4, 'F606W': 4, 'F657N': 4,
+hst_aperture_rad_pix = {'F275W': 4, 'F336W': 4, 'F435W': 4, 'F438W': 4, 'F475W': 4, 'F555W': 4,  'F547M': 4, 'F606W': 4, 'F657N': 4,
                         'F658N': 4, 'F689M': 4, 'F814W': 4,
                         'F110W': 4, 'F128N': 4}
 
@@ -933,6 +933,81 @@ spec_line_dict = {
 
 
 }
+
+ppxf_lyman_line_dict = {}
+ppxf_balmer_line_dict = {
+    'H10': {'vac_wave': 3798.983, 'plot_name': 'H10'},
+    'H9': {'vac_wave': 3836.479, 'plot_name': 'H9'},
+    'H8': {'vac_wave': 3890.158, 'plot_name': 'H8'},
+    'Heps': {'vac_wave': 3971.202, 'plot_name': r'H$\epsilon$'},
+    'Hdelta': {'vac_wave': 4102.899, 'plot_name': r'H$\delta$'},
+    'Hgamma': {'vac_wave': 4341.691, 'plot_name': r'H$\gamma$'},
+    'Hbeta': {'vac_wave': 4862.692, 'plot_name': r'H$\beta$'},
+    'Halpha': {'vac_wave': 6564.635, 'plot_name': r'H$\alpha$'},
+}
+ppxf_paschen_line_dict = {}
+ppxf_brackett_line_dict = {}
+ppxf_pfund_line_dict = {}
+ppxf_humphreys_line_dict = {}
+ppxf_he_line_dict = {
+    'HeII4687': {'vac_wave': 4687.015, 'plot_name': 'HeII4687', 'fix_doublet': False},
+    'HeI5876': {'vac_wave': 5877.243, 'plot_name': 'HeI5876', 'fix_doublet': False},
+    'HeI6678': {'vac_wave': 6679.995, 'plot_name': 'HeI6678', 'fix_doublet': False},
+}
+ppxf_nitrogen_line_dict = {
+    '[NI]5200': {'vac_wave': 5201.707, 'plot_name': r'[NI]5200', 'fix_doublet': False},
+    '[NII]5755': {'vac_wave': 5756.188, 'plot_name': r'[NII]5755', 'fix_doublet': False},
+    '[NII]6548': {'vac_wave': 6549.862, 'plot_name': r'[NII]6548', 'fix_doublet': True, 'doublet_line': '[NII]6583'},
+    '[NII]6583': {'vac_wave': 6585.282, 'plot_name': r'[NII]6583', 'fix_doublet': True, 'doublet_line': '[NII]6548'},
+}
+ppxf_oxygen_line_dict = {
+    '[OII]3726': {'vac_wave': 3727.092, 'plot_name': '[OIII]3726', 'fix_doublet': False},
+    '[OII]3729': {'vac_wave': 3729.875, 'plot_name': '[OIII]3729', 'fix_doublet': False},
+    '[OIII]4960': {'vac_wave': 4960.295, 'plot_name': '[OIII]4960', 'fix_doublet': True, 'doublet_line': '[OIII]5007'},
+    '[OIII]5007': {'vac_wave': 5008.240, 'plot_name': '[OIII]5007', 'fix_doublet': True, 'doublet_line': '[OIII]4960'},
+    '[OI]6300': {'vac_wave': 6302.040, 'plot_name': '[OI]6300', 'fix_doublet': True, 'doublet_line': '[OI]6364'},
+    '[OI]6364': {'vac_wave': 6365.535, 'plot_name': '[OI]6364', 'fix_doublet': True, 'doublet_line': '[OI]6300'},
+}
+ppxf_neon_line_dict = {
+    '[NeIII]3968': {'vac_wave': 3968.59, 'plot_name': r'[NeIII]3968', 'fix_doublet': False},
+    '[NeIII]3869': {'vac_wave': 3869.86, 'plot_name': r'[NeIII]3869', 'fix_doublet': False},
+}
+ppxf_sulfur_line_dict = {
+    '[SII]6312': {'vac_wave': 6313.808, 'plot_name': r'[SIII]6312', 'fix_doublet': False},
+    '[SII]6347': {'vac_wave': 6348.858, 'plot_name': r'[SIII]6347', 'fix_doublet': False},
+    '[SII]6716': {'vac_wave': 6718.298, 'plot_name': r'[SIII]6716', 'fix_doublet': False},
+    '[SII]6731': {'vac_wave': 6732.671, 'plot_name': r'[SIII]6731', 'fix_doublet': False},
+}
+ppxf_iron_line_dict = {
+    '[FeII]5198': {'vac_wave': 5199.026, 'plot_name': '[FeII]5198', 'fix_doublet': False},
+}
+ppxf_sodium_line_dict = {
+    'NaD5896': {'vac_wave': 5897.5581, 'plot_name': 'NaD5896', 'fix_doublet': False},
+}
+ppxf_calcium_line_dict = {
+    'CaII8498': {'vac_wave': 8500.36, 'plot_name': 'CaII8498', 'fix_doublet': False},
+    'CaII8542': {'vac_wave': 8544.44, 'plot_name': 'CaII8542', 'fix_doublet': False},
+    'CaII8662': {'vac_wave': 8664.52, 'plot_name': 'CaII8662', 'fix_doublet': False},
+}
+
+
+all_line_dict = {
+    **ppxf_lyman_line_dict,
+    **ppxf_balmer_line_dict,
+    **ppxf_paschen_line_dict,
+    **ppxf_brackett_line_dict,
+    **ppxf_pfund_line_dict,
+    **ppxf_humphreys_line_dict,
+    **ppxf_he_line_dict,
+    **ppxf_nitrogen_line_dict,
+    **ppxf_oxygen_line_dict,
+    **ppxf_neon_line_dict,
+    **ppxf_sulfur_line_dict,
+    **ppxf_iron_line_dict,
+    **ppxf_sodium_line_dict,
+    **ppxf_calcium_line_dict,
+}
+
 
 # theoretical emission line ratios taken from the python package pyneb
 # print(pyneb.Atom('O', 3).getHighDensRatio(wave1=5007, wave2=4959))

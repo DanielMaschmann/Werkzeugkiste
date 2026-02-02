@@ -2,24 +2,19 @@
 Gathers all functions to estimate photometry
 """
 
-import pandas as pd
-import numpy as np
 from pathlib import Path
+import numpy as np
 import pickle
-from photutils.aperture import (aperture_photometry, CircularAperture, CircularAnnulus, SkyCircularAperture,
-                                SkyCircularAnnulus, CircularAnnulus, CircularAperture, ApertureStats,
-                                aperture_photometry)
-from photutils.profiles import RadialProfile, CurveOfGrowth
+import pandas as pd
 from photutils import background
+from photutils.aperture import (aperture_photometry, CircularAperture, CircularAnnulus, SkyCircularAperture,
+                                SkyCircularAnnulus, ApertureStats)
+from photutils.profiles import RadialProfile, CurveOfGrowth
 from photutils.detection import DAOStarFinder, find_peaks
 import astropy.units as u
 from astropy.coordinates import SkyCoord
-from astropy import constants as const
-speed_of_light_kmps = const.c.to('km/s').value
-from astropy.stats import SigmaClip
-from astropy.stats import sigma_clipped_stats
+from astropy.stats import SigmaClip, sigma_clipped_stats
 from scipy import ndimage
-# owen packages
 from werkzeugkiste import helper_func, phys_params
 from obszugang import obs_info
 from obszugang.psf_tools import PSFTools

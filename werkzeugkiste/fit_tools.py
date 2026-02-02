@@ -2,10 +2,13 @@
 This script gathers the very core function of modeling and fitting emission line profiles
 """
 
-from scipy.constants import c as speed_of_light_mps
 import numpy as np
+from scipy.constants import c as speed_of_light_mps
 from astropy.modeling.models import Voigt1D
-import iminuit
+try:
+    import iminuit
+except ImportError:
+    print('fitting tools using iminuit is not available. If you need this dependency do: pip install iminuit ')
 from werkzeugkiste import phys_params
 
 
