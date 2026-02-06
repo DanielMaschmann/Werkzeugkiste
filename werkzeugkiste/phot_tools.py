@@ -1911,6 +1911,41 @@ class SrcTools:
         return find_peaks(data=data, threshold=detection_threshold, box_size=box_size)
 
     @staticmethod
+    def re_center_src_on_img(img, wcs, ra, dec, re_center_rad_arcsec, centroid_rad_arcsec):
+
+        mean_cutout, median_cutout, std_cutout = sigma_clipped_stats(img, sigma=3.0)
+        cutout_mask = np.isnan(img)
+        detected_peaks = SrcTools.detect_peaks(
+        data=img,
+        detection_threshold=median_cutout + 3 * std_cutout, box_size=3)
+
+        # we re-center onto the brightest spot inside the ROI
+        if detected_peaks is None:
+            ra_re_center = ra
+            dec_re_center = dec
+        else:
+            x_src = list(detected_peaks['x_peak'])
+            y_src = list(detected_peaks['y_peak'])
+            positions_world = wcs.pixel_to_world(
+                detected_peaks['x_peak'], detected_peaks['y_peak'])
+            ra_src = list(positions_world.ra.deg)
+            dec_src = list(positions_world.dec.deg)
+            peak_values = detected_peaks['peak_value']
+
+            src_dict = {'x_src': x_src, 'y_src': y_src, 'ra_src': ra_src, 'dec_src': dec_src,
+                        'peak_value': peak_values}
+
+            re_center_dict = SrcTools.re_center_src_world(
+                init_ra=ra, init_dec=dec, data=img,
+                wcs=wcs, mask=cutout_mask, src_dict=src_dict,
+                re_center_rad_arcsec=re_center_rad_arcsec,
+                centroid_rad_arcsec=centroid_rad_arcsec)
+            ra_re_center = re_center_dict['ra_src_recenter']
+            dec_re_center = re_center_dict['dec_src_recenter']
+
+        return ra_re_center, dec_re_center
+
+    @staticmethod
     def detect_star_like_src_from_topo_dict(topo_dict, src_threshold_detect_factor=3, src_fwhm_detect_factor=1):
 
         # perform source detection

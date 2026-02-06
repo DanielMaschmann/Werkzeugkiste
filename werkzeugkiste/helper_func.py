@@ -1284,6 +1284,50 @@ class GeometryTools:
         # flipped.
         return array[int(np.rint(y_pos)), int(np.rint(x_pos))]
 
+    @staticmethod
+    def check_pix_is_inside_ellipse(x_point, y_point, x_center_ellipse, y_center_ellispe, minor_rad, major_rad, angle):
+        """
+        Check if a point (x_point, y_point) is inside a rotated ellipse.
+        x_center_ellipse, y_center_ellispe: center coordinates
+        a, b: semi-major and semi-minor axes lengths
+        alpha_degrees: angle of rotation in degrees
+        """
+        # Convert angle to radians for math functions
+        cos_a = np.cos(angle*np.pi/180)
+        sin_a = np.sin(angle*np.pi/180)
+
+        # Translate and rotate the point
+        xc = x_point - x_center_ellipse
+        yc = y_point - y_center_ellispe
+        xct = xc * cos_a + yc * sin_a
+        yct = xc * sin_a - yc * cos_a
+
+        # Apply the standard ellipse equation to the transformed coordinates
+        p = (xct**2 / minor_rad**2) + (yct**2 / major_rad**2)
+        return p <= 1.0
+
+    @staticmethod
+    def check_coord_is_inside_ellipse(wcs, pos, pos_ellipse, minor_rad, major_rad, angle):
+
+        if isinstance(minor_rad, u.Quantity):
+            minor_rad = minor_rad.to(u.arcsec).value
+        if isinstance(major_rad, u.Quantity):
+            major_rad = major_rad.to(u.arcsec).value
+        if isinstance(angle, u.Quantity):
+            angle = angle.to(u.deg).value
+
+
+        coord_pixel = wcs.world_to_pixel(pos)
+        center_ellipse_pixel = wcs.world_to_pixel(pos_ellipse)
+        minor_rad_pix = CoordTools.transform_world2pix_scale(length_in_arcsec=minor_rad, wcs=wcs)
+        major_rad_pix = CoordTools.transform_world2pix_scale(length_in_arcsec=major_rad, wcs=wcs)
+
+
+
+        return GeometryTools.check_pix_is_inside_ellipse(
+            x_point=coord_pixel[0], y_point=coord_pixel[1], x_center_ellipse=center_ellipse_pixel[0],
+            y_center_ellispe=center_ellipse_pixel[1], minor_rad=minor_rad_pix, major_rad=major_rad_pix, angle=angle)
+
 
 class FuncAndModels:
     @staticmethod
@@ -1305,7 +1349,7 @@ class FuncAndModels:
 
         expo = -a * (x - x0) ** 2 - b * (y - y0) ** 2 - 2 * c * (x - x0) * (y - y0)
 
-        return amp * np.exp(expo)
+        return amp * np.exp(expo) / np.max(np.exp(expo))
 
     @staticmethod
     def moffat1d(rad, beta, alpha):
