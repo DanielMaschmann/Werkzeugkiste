@@ -1119,6 +1119,22 @@ class FileTools:
             data_identifier = res
         return data_identifier
 
+    @staticmethod
+    def get_nirspec_grating_file_name_comp(grating):
+        """
+        Function to convert grating name into the way it is spelled in nirspec file names
+
+        Parameters
+        ----------
+        grating : str
+
+        Return
+        ------
+        grating_file_component : str
+        """
+        return grating.lower().replace('/', '-')
+
+
 
 class GeometryTools:
     """

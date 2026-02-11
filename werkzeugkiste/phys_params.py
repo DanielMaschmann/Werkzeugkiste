@@ -309,10 +309,10 @@ roman_bands_wave = {
 
 # spectroscopy gratings
 miri_gratings = {
-    'channel_1': {'FOV': (3.2, 3.7), 'pixel_size_arcsec': 0.176, 'wave_min': 4.9, 'wave_max': 7.65},
-    'channel_2': {'FOV': (4.0, 4.8), 'pixel_size_arcsec': 0.277, 'wave_min': 7.51, 'wave_max': 11.7},
-    'channel_3': {'FOV': (5.2, 6.2), 'pixel_size_arcsec': 0.387, 'wave_min': 11.55, 'wave_max': 17.98},
-    'channel_4': {'FOV': (6.6, 7.7), 'pixel_size_arcsec': 0.645, 'wave_min': 17.7, 'wave_max': 27.9},
+    'CH1': {'FOV': (3.2, 3.7), 'pixel_size_arcsec': 0.176, 'wave_min': 4.9, 'wave_max': 7.65},
+    'CH2': {'FOV': (4.0, 4.8), 'pixel_size_arcsec': 0.277, 'wave_min': 7.51, 'wave_max': 11.7},
+    'CH3': {'FOV': (5.2, 6.2), 'pixel_size_arcsec': 0.387, 'wave_min': 11.55, 'wave_max': 17.98},
+    'CH4': {'FOV': (6.6, 7.7), 'pixel_size_arcsec': 0.645, 'wave_min': 17.7, 'wave_max': 27.9},
 }
 nirspec_gratings = {
 'G140M/F070LP': {'wave_min': 0.90, 'wave_max': 1.27},
