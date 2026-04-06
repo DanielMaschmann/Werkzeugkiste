@@ -325,6 +325,67 @@ nirspec_gratings = {
 'G395H/F290LP': {'wave_min': 2.87, 'wave_max': 5.27}
 }
 
+kcwi_resolution = {
+    'bl_large': 900,
+    'bl_medium': 1800,
+    'bl_small': 3600,
+
+    'bm_large': 2000,
+    'bm_medium': 4000,
+    'bm_small': 8000,
+
+    'bh1_large': 4500,
+    'bh1_medium': 9000,
+    'bh1_small': 18000,
+
+    'bh2_large': 4500,
+    'bh2_medium': 9000,
+    'bh2_small': 18000,
+
+    'bh3_large': 4500,
+    'bh3_medium': 9000,
+    'bh3_small': 18000,
+
+    'rl_large': 500,
+    'rl_medium': 1000,
+    'rl_small': 2000,
+
+    'rl7150_large': 500,
+    'rl7150_medium': 1000,
+    'rl7150_small': 2000,
+
+    'rl8950_large': 500,
+    'rl8950_medium': 1000,
+    'rl8950_small': 2000,
+
+    'rm1_large': 1400,
+    'rm1_medium': 2800,
+    'rm1_small': 5600,
+
+    'rm2_large': 1400,
+    'rm2_medium': 2800,
+    'rm2_small': 5600,
+
+    'rh1_large': 3250,
+    'rh1_medium': 6500,
+    'rh1_small': 13000,
+
+    'rh2_large': 3250,
+    'rh2_medium': 6500,
+    'rh2_small': 13000,
+
+    'rh3_large': 3250,
+    'rh3_medium': 6500,
+    'rh3_small': 13000,
+
+    'rh4_large': 3250,
+    'rh4_medium': 6500,
+    'rh4_small': 13000,
+}
+
+
+
+
 
 ####################################################################################################
 #### estimations of encircled energy, aperture sizes, bkg annuli sizes and aperture corrections ####
@@ -936,6 +997,15 @@ spec_line_dict = {
 
 ppxf_lyman_line_dict = {}
 ppxf_balmer_line_dict = {
+    'H19': {'vac_wave': 3687.881, 'plot_name': 'H19'},
+    'H18': {'vac_wave': 3692.602, 'plot_name': 'H18'},
+    'H17': {'vac_wave': 3698.209, 'plot_name': 'H17'},
+    'H16': {'vac_wave': 3704.913, 'plot_name': 'H16'},
+    'H15': {'vac_wave': 3713.033, 'plot_name': 'H15'},
+    'H14': {'vac_wave': 3723.004, 'plot_name': 'H14'},
+    'H13': {'vac_wave': 3735.431, 'plot_name': 'H13'},
+    'H12': {'vac_wave': 3751.224, 'plot_name': 'H12'},
+    'H11': {'vac_wave': 3771.708, 'plot_name': 'H11'},
     'H10': {'vac_wave': 3798.983, 'plot_name': 'H10'},
     'H9': {'vac_wave': 3836.479, 'plot_name': 'H9'},
     'H8': {'vac_wave': 3890.158, 'plot_name': 'H8'},
@@ -946,7 +1016,11 @@ ppxf_balmer_line_dict = {
     'Halpha': {'vac_wave': 6564.635, 'plot_name': r'H$\alpha$'},
 }
 ppxf_paschen_line_dict = {}
-ppxf_brackett_line_dict = {}
+ppxf_brackett_line_dict = {
+        'Brgamma': {'vac_wave': 21655, 'plot_name': r'H$\gamma$'},
+
+
+}
 ppxf_pfund_line_dict = {}
 ppxf_humphreys_line_dict = {}
 ppxf_he_line_dict = {

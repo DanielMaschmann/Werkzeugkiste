@@ -22,6 +22,9 @@ except ImportError:
 from werkzeugkiste import helper_func, phys_params
 from werkzeugkiste.fit_tools import FitModels
 
+# print('H11 ', util.air_to_vac(3770.637))
+# exit()
+
 
 standard_gas_line_comp_dict = {
     # dust attenuation for all gas components
@@ -161,6 +164,8 @@ class SpecHelper:
         -------
         redshift : float
         """
+        # if target == 'ngc5068':
+        #     return 0.002235
 
         from astroquery.ipac.ned import Ned
         # get the center of the target
@@ -325,41 +330,61 @@ class SpecHelper:
 
         return obs_line_pos - blue_limit, obs_line_pos + red_limit
 
-
-
     @staticmethod
-    def get_kcwi_lsf_sig(wave):
+    def get_kcwi_lsf_sig(wave, grating='bl_large'):
         """
-        Adopted from Eq. 11 of van Dokkum+2019 2019ApJ...880...91V
 
         Parameters
         ----------
         wave : float or ``astropy.units.Quantity``
             in Units of angstrom
+        grating : str
         Return
         ---------
         lsf : ``astropy.units.Quantity``
             in Units of angstrom
 
         """
+
+        # if not isinstance(wave, u.Quantity):
+        #     wave *= u.Angstrom
+        # if grating == 'bm':
+        #     # Adopted from Eq. 11 of van Dokkum+2019 2019ApJ...880...91V
+        #     return (0.377 - 5.79e-5 * (wave.to(u.Angstrom).value - 5000) - 1.144e-7 * ((wave.to(u.Angstrom).value - 5000)**2)) * u.Angstrom
+        # if grating == 'bl':
+        #     # adopted from https://arxiv.org/html/2407.04782v1
+        #     return np.ones(len(wave)) * 2.5 / (2*np.sqrt(2 * np.log(2))) * u.Angstrom
+
+        return SpecHelper.get_kcwi_lsf_fwhm(wave=wave, grating=grating) / (2*np.sqrt(2 * np.log(2)))
+
+
+    @staticmethod
+    def get_kcwi_lsf_fwhm(wave, grating='bl_large'):
+        """
+        computing the resolution based on instrument properties as taken from
+        https://koa.ipac.caltech.edu/UserGuide/KCWI/modes.html
+
+        Parameters
+        ----------
+        wave : float or ``astropy.units.Quantity``
+            in Units of angstrom
+        grating : str
+        Return
+        ---------
+        lsf : ``astropy.units.Quantity``
+            in Units of angstrom
+
+        """
+
+        # first get the resolution
+
         if not isinstance(wave, u.Quantity):
             wave *= u.Angstrom
-        return (0.377 - 5.79e-5 * (wave.to(u.Angstrom).value - 5000) - 1.144e-7 * ((wave.to(u.Angstrom).value - 5000)**2)) * u.Angstrom
+        return wave / phys_params.kcwi_resolution[grating]
 
-    @staticmethod
-    def get_kcwi_lsf_fwhm(wave):
-        """
-        Parameters
-        ----------
-        wave : float or ``astropy.units.Quantity``
-            in Units of angstrom
-        Return
-        ---------
-        lsf : ``astropy.units.Quantity``
-            in Units of angstrom
 
-        """
-        return SpecHelper.get_kcwi_lsf_sig(wave=wave)*2*np.sqrt(2 * np.log(2))
+
+        # return SpecHelper.get_kcwi_lsf_sig(wave=wave, grating=grating)*2*np.sqrt(2 * np.log(2))
 
     @staticmethod
     def get_muse_lsf_fwhm(wave):
@@ -534,7 +559,7 @@ class SpecHelper:
             line=line, vel=vel.to(u.km / u.s), line_ref=line_ref)
 
     @staticmethod
-    def conv_obs_line_wave2helio_cen_vel(obs_line_wave, line, vel_unit='kmps', line_ref='vac_wave'):
+    def conv_obs_line_wave2helio_cen_vel(obs_line_wave, line, vel=None, redshift=None, vacuum=True):
         """
         Function to get the position of a line based on redshift or velocity
 
@@ -557,8 +582,11 @@ class SpecHelper:
         if not isinstance(obs_line_wave, u.Quantity):
             obs_line_wave *= (u.Angstrom)
 
-        line_offset = obs_line_wave.to(u.Angstrom) - phys_params.spec_line_dict[line][line_ref]
-        return SpecHelper.conv_delta_wave2vel(line=line, delta_wave=line_offset, line_ref=line_ref)
+        obs_line_pos = SpecHelper.get_obs_line_pos(line=line, vel=vel, redshift=redshift, vacuum=vacuum)
+
+        line_offset = obs_line_wave.to(u.Angstrom) - obs_line_pos
+
+        return line_offset.to(u.Angstrom) * const.c.to(u.km / u.s) / obs_line_pos
 
     @staticmethod
     def get_obs_line_pos_old(line, vel=None, target=None, redshift=None, instrument='muse', wave_ref=None):
@@ -771,7 +799,6 @@ class PpxfTools:
 
         return stellar_template_dict
 
-
     @staticmethod
     def custom_ppxf_emission_lines(ln_lam_temp, lam_range_gal, fwhm_gal, pixel=True,
                                    tie_balmer=False, limit_doublets=False, vacuum=False, line_list=None):
@@ -901,13 +928,21 @@ class PpxfTools:
 
         """
 
+
+        # to do:
+        # add all balmer line ratios
+        # add pashen series
+
+
         if isinstance(fwhm_gal, dict):
             fwhm_gal1 = lambda lam: np.interp(lam, fwhm_gal["lam"], fwhm_gal["fwhm"])
         else:
             fwhm_gal1 = fwhm_gal
 
-        #        Balmer:     H10       H9         H8        Heps    Hdelta    Hgamma    Hbeta     Halpha
-        balmer = np.array([3798.983, 3836.479, 3890.158, 3971.202, 4102.899, 4341.691, 4862.691, 6564.632])  # vacuum wavelengths
+        ##### Balmer lines
+
+        #        Balmer:     H14       H13       H12       H11       H10       H9         H8        Heps    Hdelta    Hgamma    Hbeta     Halpha
+        balmer = np.array([3723.004, 3735.431, 3751.224, 3771.708, 3798.983, 3836.479, 3890.158, 3971.202, 4102.899, 4341.691, 4862.691, 6564.632])  # vacuum wavelengths
 
         if tie_balmer:
 
@@ -933,7 +968,7 @@ class PpxfTools:
             line_wave = balmer
             if not vacuum:
                 line_wave = util.vac_to_air(line_wave)
-            line_names = ['H10', 'H9', 'H8', 'Heps', 'Hdelta', 'Hgamma', 'Hbeta', 'Halpha']
+            line_names = ['H14', 'H13', 'H12', 'H11', 'H10', 'H9', 'H8', 'Heps', 'Hdelta', 'Hgamma', 'Hbeta', 'Halpha']
             emission_lines = util.gaussian(ln_lam_temp, line_wave, fwhm_gal1, pixel)
 
         if limit_doublets:
@@ -984,11 +1019,11 @@ class PpxfTools:
             line_wave = np.append(line_wave, wave)
 
         # Here the lines are free to have any ratio
-        #       -----[NeIII]-----    HeII      HeI
-        wave = [3968.59, 3869.86, 4687.015, 5877.243]  # vacuum wavelengths
+        #       -----[NeIII]-----    HeII      HeI      HeI
+        wave = [3968.59, 3869.86, 4687.015, 5877.243, 6679.995]  # vacuum wavelengths
         if not vacuum:
             wave = util.vac_to_air(wave)
-        names = ['[NeIII]3968', '[NeIII]3869', 'HeII4687', 'HeI5876']
+        names = ['[NeIII]3968', '[NeIII]3869', 'HeII4687', 'HeI5876', 'HeI6678']
         gauss = util.gaussian(ln_lam_temp, wave, fwhm_gal1, pixel)
         emission_lines = np.column_stack([emission_lines, gauss])
         line_names = np.append(line_names, names)
@@ -1041,7 +1076,6 @@ class PpxfTools:
         print(line_names)
 
         return emission_lines, line_names, line_wave
-
 
     @staticmethod
     def prepare_ppxf_fit_comp_dict(
@@ -1125,7 +1159,8 @@ class PpxfTools:
 
 
         ln_rebin_good_pixel_mask = np.invert(np.isnan(ln_rebin_spec_flx) + np.isinf(ln_rebin_spec_flx) +
-                                             np.isnan(ln_rebin_spec_flx_err) + np.isinf(ln_rebin_spec_flx_err))
+                                             np.isnan(ln_rebin_spec_flx_err) + np.isinf(ln_rebin_spec_flx_err) +
+                                             (ln_rebin_spec_flx < 0) + (ln_rebin_spec_flx_err < 0))
 
 
         ln_rebin_lin_wave_range = [np.nanmin(ln_rebin_lin_wave), np.nanmax(ln_rebin_lin_wave)]
@@ -2198,6 +2233,7 @@ class LineSpecFit:
             'sys_vel': sys_vel, 'redshift': redshift
         }
         return ppxf_dict, em_line_fit_dict
+
 
 #####################
 ##### Code dump #####
