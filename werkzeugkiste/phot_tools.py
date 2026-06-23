@@ -16,9 +16,8 @@ from astropy.coordinates import SkyCoord
 from astropy.stats import SigmaClip, sigma_clipped_stats
 from scipy import ndimage
 from werkzeugkiste import helper_func, phys_params
-from obszugang import obs_info
 from obszugang.psf_tools import PSFTools
-
+from obszugang import ObsTools
 
 class ProfileTools:
     """
@@ -1381,6 +1380,11 @@ class ApertTools:
             annulus_rad_out_pix=bkg_rad_annulus_out_pix, sum_method=sum_method, data=data, sig_clip=sig_clip,
             quantile_low=0.16, quantile_high=0.84)
 
+        bkg_10_clip, bkg_90_clip, bkg_ok_flag = ApertTools.compute_annulus_quantiles(
+            coords_pix=coords_pix, annulus_rad_in_pix=bkg_rad_annulus_in_pix,
+            annulus_rad_out_pix=bkg_rad_annulus_out_pix, sum_method=sum_method, data=data, sig_clip=sig_clip,
+            quantile_low=0.10, quantile_high=0.90)
+
         # calculate stats in the aperture
         apert_stats = ApertTools.get_sky_apert_stats(
             data=data, data_err=data_err, wcs=wcs, ra=ra, dec=dec, aperture_rad_arcsec=apert_rad_arcsec, mask=mask,
@@ -1430,15 +1434,17 @@ class ApertTools:
          of the background. 
         """
 
-        bkg_err = (bkg_84_clip - bkg_16_clip) / 2
+        bkg_err_conservative = (bkg_84_clip - bkg_16_clip) / 2
+        # bkg_err = (bkg_90_clip - bkg_10_clip) / 2
+
 
         # the two last terms can be identified in EQ1 of https://wise2.ipac.caltech.edu/staff/fmasci/ApPhotUncert.pdf
         src_flux_err = np.sqrt(
             # uncertainty from data in the aperture
             pow(apert_flux_err, 2.) +
             # uncertainty due to background fluctuation
-            pow(bkg_err, 2.) +
-            (pow(bkg_err * area_apert, 2) / area_annulus) * np.pi / 2)
+            pow(bkg_err_conservative, 2.) +
+            (pow(bkg_err_conservative * area_apert, 2) / area_annulus) * np.pi / 2)
 
         flux_dict = {
             'apert_flux': apert_flux,
@@ -2328,18 +2334,18 @@ class EWTools:
     def compute_hst_photo_ew(target, left_band, right_band, narrow_band, flux_left_band, flux_right_band,
                              flux_narrow_band, flux_err_left_band, flux_err_right_band, flux_err_narrow_band):
         # get the piviot wavelength of both bands
-        pivot_wave_left_band = helper_func.ObsTools.get_hst_band_wave(
-            band=left_band, instrument=helper_func.ObsTools.get_hst_instrument(target=target, band=left_band),
+        pivot_wave_left_band = ObsTools.get_hst_band_wave(
+            band=left_band, instrument=ObsTools.get_hst_instrument(target=target, band=left_band),
             wave_estimator='pivot_wave', unit='angstrom')
-        pivot_wave_right_band = helper_func.ObsTools.get_hst_band_wave(
-            band=right_band, instrument=helper_func.ObsTools.get_hst_instrument(target=target, band=right_band),
+        pivot_wave_right_band = ObsTools.get_hst_band_wave(
+            band=right_band, instrument=ObsTools.get_hst_instrument(target=target, band=right_band),
             wave_estimator='pivot_wave', unit='angstrom')
-        pivot_wave_narrow_band = helper_func.ObsTools.get_hst_band_wave(
-            band=narrow_band, instrument=helper_func.ObsTools.get_hst_instrument(target=target, band=narrow_band),
+        pivot_wave_narrow_band = ObsTools.get_hst_band_wave(
+            band=narrow_band, instrument=ObsTools.get_hst_instrument(target=target, band=narrow_band),
             wave_estimator='pivot_wave', unit='angstrom')
         # get the effective width of the narrowband filter
-        w_eff_narrow_band = helper_func.ObsTools.get_hst_band_wave(
-            band=narrow_band, instrument=helper_func.ObsTools.get_hst_instrument(target=target, band=narrow_band),
+        w_eff_narrow_band = ObsTools.get_hst_band_wave(
+            band=narrow_band, instrument=ObsTools.get_hst_instrument(target=target, band=narrow_band),
             wave_estimator='w_eff', unit='angstrom')
 
         # now change from fluxes to flux densities

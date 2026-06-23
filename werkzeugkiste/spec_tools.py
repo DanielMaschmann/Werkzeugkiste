@@ -16,7 +16,7 @@ except ImportError:
 try:
     from TardisPipeline.readData.MUSE_WFM import get_MUSE_polyFWHM
 except ImportError:
-    print('Spectroscopic analysis of MUSe data relying on the TardisPipeline is not available. '
+    print('Spectroscopic analysis of MUSE data relying on the TardisPipeline is not available. '
           'If you want to use this, clone the git repo at https://gitlab.com/francbelf/ifu-pipeline '
           'and add package to your root directory. ')
 from werkzeugkiste import helper_func, phys_params
@@ -168,6 +168,11 @@ class SpecHelper:
         #     return 0.002235
 
         from astroquery.ipac.ned import Ned
+        # from astroquery.simbad import Simbad
+        # result_table = Simbad.query_object(target)
+        # print(result_table)
+
+
         # get the center of the target
         ned_table = Ned.query_object(target)
 
