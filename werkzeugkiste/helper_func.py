@@ -738,7 +738,9 @@ class UnitTools:
 
     @staticmethod
     def conv_flux2lum(flux, dist_mpc):
-        dist_m = (dist_mpc * u.Mpc).to(u.cm).value
+        # dist_m = (dist_mpc * u.Mpc).to(u.cm).value
+        # return flux * (4 * np.pi) * (dist_m ** 2)
+        dist_m = (dist_mpc * u.Mpc)
         return flux * (4 * np.pi) * (dist_m ** 2)
 
     @staticmethod

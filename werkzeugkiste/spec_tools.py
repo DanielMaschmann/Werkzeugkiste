@@ -167,6 +167,11 @@ class SpecHelper:
         # if target == 'ngc5068':
         #     return 0.002235
 
+        if target == 'ngc2903':
+            return 0.001834
+
+        if target == 'MESSIER077':
+            return 0.003793
         from astroquery.ipac.ned import Ned
         # from astroquery.simbad import Simbad
         # result_table = Simbad.query_object(target)
@@ -362,7 +367,6 @@ class SpecHelper:
 
         return SpecHelper.get_kcwi_lsf_fwhm(wave=wave, grating=grating) / (2*np.sqrt(2 * np.log(2)))
 
-
     @staticmethod
     def get_kcwi_lsf_fwhm(wave, grating='bl_large'):
         """
@@ -470,13 +474,6 @@ class SpecHelper:
         return (ln_rebin_ln_wave, ln_rebin_lin_wave, ln_rebin_spec_flx, ln_rebin_spec_flx_err,
                 ln_rebin_velscale_kmps_per_pix)
 
-
-
-
-
-
-
-
     @staticmethod
     def wave_window2mask(wave, wave_window):
         if isinstance(wave_window, tuple):
@@ -522,6 +519,161 @@ class SpecHelper:
                                                        blue_limit=blue_limit, red_limit=red_limit)
 
         return multi_line_mask
+
+
+
+    @staticmethod
+    def compute_reddening_curve(wavelength=6565, r_v=3.1):
+        r"""
+        calculate reddening courve
+         following  Calzetti et al. (2000) doi:10.1086/308692
+         using eq. 4
+
+        :param wavelength: restframe wavelength in angstrom of spectral part of which to compute the reddening curve
+        :type wavelength: float or int
+        :param r_v: default 3.1  total extinction at V
+        :type r_v: float
+
+        :return extinction E(B - V) in mag
+        :rtype: array_like
+        """
+
+        # change wavelength from Angstrom to microns
+        wavelength *= 1e-4
+
+        # eq. 4
+        if (wavelength > 0.63) & (wavelength < 2.20):
+            # sutable for 0.63 micron < wavelength < 2.20 micron
+            k_lambda = 2.659 * ( -1.857 + 1.040/wavelength ) + r_v
+        elif (wavelength > 0.12) & (wavelength < 0.63):
+            # sutable for 0.12 micron < wavelength < 0.63 micron
+            k_lambda = 2.659 * (- 2.156 + 1.509 / wavelength - 0.198/ wavelength**2 + 0.011/wavelength**3) + r_v
+        else:
+            raise KeyError('wavelength must be > 1200 Angstrom and < 22000 Angstrom')
+
+        return k_lambda
+
+    def get_corr_h_alpha_flux(self, flux_h_alpha_6565=None, flux_h_beta_4863=None, line_shape='gauss'):
+        """
+        Get extinction corrected h_alpha flux err following Calzetti et al. (2000) doi:10.1086/308692
+         using eq. 2 and eq.3
+        """
+
+        # get eimission line flux
+        if (flux_h_alpha_6565 is None) & (flux_h_beta_4863 is None):
+            flux_h_alpha_6565 = self.get_emission_line_flux(line_wavelength=6565, line_shape=line_shape)
+            flux_h_beta_4863 = self.get_emission_line_flux(line_wavelength=4863, line_shape=line_shape)
+
+        # get extinction
+        e_b_v = self.get_extinction(flux_h_alpha_6565=flux_h_alpha_6565, flux_h_beta_4863=flux_h_beta_4863,
+                                    line_shape=line_shape)
+
+        #  the color excess of the stellar continuum is linked to the color excess e_s_b_v derived from the nebular
+        #  gas emission lines e_b_v
+        # correcting using eq. 3
+        # e_s_b_v = 0.44 * e_b_v
+
+        # get reddening curve
+        k_h_alpha = self.compute_reddening_curve(wavelength=6565, r_v=3.1)
+
+        # flux crrection eq. 2
+        # corr_flux_h_alpha_6565 = flux_h_alpha_6565 * 10 ** (0.4 * e_s_b_v * k_h_alpha)
+        corr_flux_h_alpha_6565 = flux_h_alpha_6565 * 10 ** (0.4 * e_b_v * k_h_alpha)
+
+        return corr_flux_h_alpha_6565
+
+    def get_corr_h_alpha_flux_err(self, flux_h_alpha_6565=None, flux_h_beta_4863=None, flux_h_alpha_6565_err=None,
+                                       flux_h_beta_4863_err=None, line_shape='gauss'):
+        """
+        Get extinction corrected h_alpha flux following Calzetti et al. (2000) doi:10.1086/308692
+         using eq. 2 and eq.3
+        """
+
+        # get eimission line flux
+        if (flux_h_alpha_6565 is None) & (flux_h_beta_4863 is None):
+            flux_h_alpha_6565 = self.get_emission_line_flux(line_wavelength=6565, line_shape=line_shape)
+            flux_h_beta_4863 = self.get_emission_line_flux(line_wavelength=4863, line_shape=line_shape)
+
+            flux_h_alpha_6565_err = self.get_emission_line_flux_err(line_wavelength=6565, line_shape=line_shape)
+            flux_h_beta_4863_err = self.get_emission_line_flux_err(line_wavelength=4863, line_shape=line_shape)
+
+        # get extinction
+        e_b_v = self.get_extinction(flux_h_alpha_6565=flux_h_alpha_6565, flux_h_beta_4863=flux_h_beta_4863,
+                                    line_shape=line_shape)
+        # get extinction err
+        e_b_v_err = self.get_extinction_err(flux_h_alpha_6565=flux_h_alpha_6565, flux_h_beta_4863=flux_h_beta_4863,
+                                            flux_h_alpha_6565_err=flux_h_alpha_6565_err,
+                                            flux_h_beta_4863_err=flux_h_beta_4863_err, line_shape=line_shape)
+
+        # the color excess of the stellar continuum is linked to the color excess e_s_b_v derived from the nebular
+        # gas emission lines e_b_v
+        # correcting using eq. 3
+        # e_s_b_v = 0.44 * e_b_v
+        # err
+        # e_s_b_v_err = 0.44 * e_b_v_err
+
+        # get reddening curve
+        k_h_alpha = self.compute_reddening_curve(wavelength=6565, r_v=3.1)
+
+        # errorpropagation of eq. 2
+        corr_flux_h_alpha_6565_err = np.sqrt((flux_h_alpha_6565_err * 10 ** (0.4 * e_b_v * k_h_alpha)) ** 2 +
+                                             (e_b_v_err * flux_h_alpha_6565 * 10 ** (0.4 * e_b_v * k_h_alpha) *
+                                              np.log(10) * 0.4 * k_h_alpha) ** 2)
+
+        return corr_flux_h_alpha_6565_err
+
+    def get_corr_h_alpha_lum(self, flux_h_alpha_6565=None, flux_h_beta_4863=None, redshift=None, line_shape='gauss'):
+        """
+         as described in Kewley et al. 2002 doi:10.1086/344487
+        :param line_shape: line shape as described in get_emission_line_flux()
+        :return: float or array
+        """
+        # get eimission line flux
+        if (flux_h_alpha_6565 is None) & (flux_h_beta_4863 is None):
+            flux_h_alpha_6565 = self.get_emission_line_flux(line_wavelength=6565, line_shape=line_shape)
+            flux_h_beta_4863 = self.get_emission_line_flux(line_wavelength=4863, line_shape=line_shape)
+
+        corrected_flux = np.array(self.get_corr_h_alpha_flux(flux_h_alpha_6565=flux_h_alpha_6565,
+                                                             flux_h_beta_4863=flux_h_beta_4863, line_shape=line_shape),
+                                  dtype=np.float64)
+
+        if redshift is None:
+            redshift = self.get_redshift()
+
+        luminosity_dist = np.array(self.cosmology.luminosity_distance(redshift).to(u.cm).value, dtype=np.float64)
+
+        corr_h_alpha_lum = corrected_flux * (1e-17 * 4 * np.pi) * (luminosity_dist**2)
+
+        return corr_h_alpha_lum
+
+    def get_corr_h_alpha_lum_err(self, flux_h_alpha_6565=None, flux_h_beta_4863=None, flux_h_alpha_6565_err=None,
+                                 flux_h_beta_4863_err=None, redshift=None, line_shape='gauss'):
+        """
+         as described in Kewley et al. 2002 doi:10.1086/344487
+        :param line_shape: line shape as described in get_emission_line_flux()
+        :return: float or array
+        """
+        # get eimission line flux
+        if (flux_h_alpha_6565 is None) & (flux_h_beta_4863 is None):
+            flux_h_alpha_6565 = self.get_emission_line_flux(line_wavelength=6565, line_shape=line_shape)
+            flux_h_beta_4863 = self.get_emission_line_flux(line_wavelength=4863, line_shape=line_shape)
+
+            flux_h_alpha_6565_err = self.get_emission_line_flux_err(line_wavelength=6565, line_shape=line_shape)
+            flux_h_beta_4863_err = self.get_emission_line_flux_err(line_wavelength=4863, line_shape=line_shape)
+
+        corrected_flux_err = np.array(self.get_corr_h_alpha_flux_err(flux_h_alpha_6565=flux_h_alpha_6565,
+                                                                     flux_h_beta_4863=flux_h_beta_4863,
+                                                                     flux_h_alpha_6565_err=flux_h_alpha_6565_err,
+                                                                     flux_h_beta_4863_err=flux_h_beta_4863_err,
+                                                                     line_shape=line_shape), dtype=np.float64)
+        if redshift is None:
+            redshift = self.get_redshift()
+
+        luminosity_dist = np.array(self.cosmology.luminosity_distance(redshift).to(u.cm).value, dtype=np.float64)
+
+        corr_h_alpha_lum_err = corrected_flux_err * (1e-17 * 4 * np.pi) * luminosity_dist * luminosity_dist
+
+        return corr_h_alpha_lum_err
 
 
 
