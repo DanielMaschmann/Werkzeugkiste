@@ -153,8 +153,6 @@ class ProfileTools:
         profile_data = profile_data[sort]
         radius_data = radius_data[sort]
         profile_mask = profile_mask[sort]
-
-
         if err is not None:
             profile_err = err[mask_pixels_in_slit]
             profile_err = profile_err[sort]
@@ -250,8 +248,8 @@ class ProfileTools:
 
             central_pix = ((rad_profile_dict[str(idx)]['radius_data'] > radius_of_interest * -1) &
                            (rad_profile_dict[str(idx)]['radius_data'] < radius_of_interest))
-            good_pix = np.invert(rad_profile_dict[str(idx)]['profile_mask'])
-
+            good_pix = np.invert(rad_profile_dict[str(idx)]['profile_mask']) * np.invert(np.isnan(rad_profile_dict[str(idx)]['profile_data'])) * np.invert(np.isnan(rad_profile_dict[str(idx)]['profile_err']))
+            # print('good_pix ', good_pix)
             # there must be at least half of the data points with a signal
             if sum(good_pix[central_pix]) < int(sum(central_pix) / 2):
                 amp_list.append(np.nan)
@@ -268,6 +266,7 @@ class ProfileTools:
             max_value_in_center = np.max(rad_profile_dict[str(idx)]['profile_data'][mask_pixels_to_fit])
             lower_amp = min_value_in_center
             upper_amp = max_value_in_center + np.abs(max_value_in_center * 2)
+            # print('upper_amp ', upper_amp)
             # update the maximal amplitude value
             if max_value_in_center > max_amp_value:
                 max_amp_value = max_value_in_center
@@ -295,6 +294,7 @@ class ProfileTools:
             #              color='gray')
 
             # fit
+
             try:
                 gaussian_fit_dict = helper_func.FitTools.fit_gauss(
                     x_data=rad_profile_dict[str(idx)]['radius_data'][mask_pixels_to_fit],
@@ -303,7 +303,10 @@ class ProfileTools:
                     amp_guess=max_value_in_center, mu_guess=0, sig_guess=std_pix,
                     lower_amp=lower_amp, upper_amp=upper_amp,
                     lower_mu=std_pix * -5, upper_mu=std_pix * 5,
-                    lower_sigma=std_pix, upper_sigma=std_pix * upper_sig_fact)
+                    lower_sigma=std_pix * 0.5, upper_sigma=std_pix * upper_sig_fact)
+
+                # print(gaussian_fit_dict)
+
                 amp_list.append(gaussian_fit_dict['amp'])
                 mu_list.append(gaussian_fit_dict['mu'])
                 sig_list.append(gaussian_fit_dict['sig'])
@@ -320,18 +323,26 @@ class ProfileTools:
                 amp_err_list.append(np.nan)
                 mu_err_list.append(np.nan)
                 sig_err_list.append(np.nan)
+            except ValueError:
+                amp_list.append(np.nan)
+                mu_list.append(np.nan)
+                sig_list.append(np.nan)
+
+                amp_err_list.append(np.nan)
+                mu_err_list.append(np.nan)
+                sig_err_list.append(np.nan)
 
             # plt.scatter(rad_profile_dict['list_angles'][idx], gaussian_fit_dict['sig'])
 
-            # if (gaussian_fit_dict['amp'] > 0) & (np.abs(gaussian_fit_dict['mu']) < std_pix * 3):
-            #
-            #     dummy_rad = np.linspace(np.min(rad_profile_dict[str(idx)]['radius_data']),
-            #                             np.max(rad_profile_dict[str(idx)]['radius_data']), 500)
-            #     gauss = helper_func.FitTools.gaussian_func(
-            #         amp=gaussian_fit_dict['amp'], mu=gaussian_fit_dict['mu'], sig=gaussian_fit_dict['sig'], x_data=dummy_rad)
-            #
-            #     # ax[idx].plot(dummy_rad, gauss, color='r')
-            #     plt.plot(dummy_rad, gauss)
+            if (gaussian_fit_dict['amp'] > 0) & (np.abs(gaussian_fit_dict['mu']) < std_pix * 3):
+
+                dummy_rad = np.linspace(np.min(rad_profile_dict[str(idx)]['radius_data']),
+                                        np.max(rad_profile_dict[str(idx)]['radius_data']), 500)
+                gauss = helper_func.FitTools.gaussian_func(
+                    amp=gaussian_fit_dict['amp'], mu=gaussian_fit_dict['mu'], sig=gaussian_fit_dict['sig'], x_data=dummy_rad)
+
+                # ax[idx].plot(dummy_rad, gauss, color='r')
+                # plt.plot(dummy_rad, gauss)
 
             # get the fit results
             # amp_list.append(gaussian_fit_dict['amp'])
@@ -656,8 +667,8 @@ class ProfileTools:
                 amp_1_err_list, amp_2_err_list, mu_err_list, sig_1_err_list, sig_2_err_list)
 
     @staticmethod
-    def get_best_gaussian_profile_params(amp_list, mu_list, sig_list,
-                                         peak_acceptance_rad_pix, n_good_fits_needed=4):
+    def get_best_gaussian_profile_params(peak_acceptance_rad_pix, amp_list, mu_list, sig_list,
+                                         sig_err_list=None, n_good_fits_needed=4):
         #check if list is empty:
         if not amp_list:
 
@@ -665,6 +676,8 @@ class ProfileTools:
                 'mean_amp': np.nan,
                 'mean_mu': np.nan,
                 'mean_sig': np.nan,
+                'mean_std_sig': np.nan,
+                'mean_sig_err': np.nan,
                 'good_fit_flag': False,
                 'mask_good_fits': None,
                 'n_successful_fits': 0
@@ -675,6 +688,8 @@ class ProfileTools:
         amp_list = np.array(amp_list)
         mu_list = np.array(mu_list)
         sig_list = np.array(sig_list)
+        if sig_err_list is not None:
+            sig_err_list = np.array(sig_err_list)
 
         # get all the gaussian functions that make sense
         # then need to be central
@@ -689,6 +704,8 @@ class ProfileTools:
             mean_amp = np.nan
             mean_mu = np.nan
             mean_sig = np.nan
+            mean_std_sig = np.nan
+            mean_sig_err = np.nan
             good_fit_flag = False
             n_successful_fits = 0
 
@@ -697,6 +714,11 @@ class ProfileTools:
             mean_amp = np.nanmean(amp_list[mask_good_fits])
             mean_mu = np.nanmean(mu_list[mask_good_fits])
             mean_sig = np.nanmean(sig_list[mask_good_fits])
+            mean_std_sig = np.std(sig_list[mask_good_fits])
+            if sig_err_list is not None:
+                mean_sig_err = np.mean(sig_err_list[mask_good_fits])
+            else:
+                mean_sig_err = np.nan
 
             if sum(mask_good_fits) < n_good_fits_needed:
                 good_fit_flag = False
@@ -709,6 +731,8 @@ class ProfileTools:
             'mean_amp': mean_amp,
             'mean_mu': mean_mu,
             'mean_sig': mean_sig,
+            'mean_std_sig': mean_std_sig,
+            'mean_sig_err': mean_sig_err,
             'good_fit_flag': good_fit_flag,
             'mask_good_fits': mask_good_fits,
             'n_successful_fits': n_successful_fits
@@ -1390,6 +1414,24 @@ class ApertTools:
             data=data, data_err=data_err, wcs=wcs, ra=ra, dec=dec, aperture_rad_arcsec=apert_rad_arcsec, mask=mask,
             sig_clip=None, sum_method=sum_method)
 
+        # calculate aperture stats with wiggle method
+        pixel_size_ra = helper_func.CoordTools.transform_pix2world_scale(length_in_pix=0.5, wcs=wcs, dim=0)
+        pixel_size_dec = helper_func.CoordTools.transform_pix2world_scale(length_in_pix=0.5, wcs=wcs, dim=1)
+        apert_stats_north = ApertTools.get_sky_apert_stats(
+            data=data, data_err=data_err, wcs=wcs, ra=ra, dec=dec + pixel_size_dec/3600,
+            aperture_rad_arcsec=apert_rad_arcsec, mask=mask, sig_clip=None, sum_method=sum_method)
+        apert_stats_south = ApertTools.get_sky_apert_stats(
+            data=data, data_err=data_err, wcs=wcs, ra=ra, dec=dec - pixel_size_dec/3600,
+            aperture_rad_arcsec=apert_rad_arcsec, mask=mask, sig_clip=None, sum_method=sum_method)
+        apert_stats_left = ApertTools.get_sky_apert_stats(
+            data=data, data_err=data_err, wcs=wcs, ra=ra + pixel_size_ra/3600, dec=dec,
+            aperture_rad_arcsec=apert_rad_arcsec, mask=mask, sig_clip=None, sum_method=sum_method)
+        apert_stats_right = ApertTools.get_sky_apert_stats(
+            data=data, data_err=data_err, wcs=wcs, ra=ra - pixel_size_ra/3600, dec=dec,
+            aperture_rad_arcsec=apert_rad_arcsec, mask=mask, sig_clip=None, sum_method=sum_method)
+
+        # calculate the uncertainty arising from wiggling
+        wiggle_err = np.std([apert_stats_north.sum, apert_stats_south.sum, apert_stats_left.sum, apert_stats_right.sum])
         # get the surfaces of aperture and anulus
         area_apert = apert_stats.sum_aper_area.value
         area_annulus = bkg_stats.sum_aper_area.value
@@ -1434,22 +1476,36 @@ class ApertTools:
          of the background. 
         """
 
-        bkg_err_conservative = (bkg_84_clip - bkg_16_clip) / 2
-        # bkg_err = (bkg_90_clip - bkg_10_clip) / 2
-
+        bkg_err = (bkg_84_clip - bkg_16_clip) / 2
+        # bkg_err = (bkg_90_clip - bkg_10_clip) / (2 * 1.29)
 
         # the two last terms can be identified in EQ1 of https://wise2.ipac.caltech.edu/staff/fmasci/ApPhotUncert.pdf
-        src_flux_err = np.sqrt(
+        stat_err = np.sqrt(
+            np.nansum([
             # uncertainty from data in the aperture
-            pow(apert_flux_err, 2.) +
+            pow(apert_flux_err, 2.),
             # uncertainty due to background fluctuation
-            pow(bkg_err_conservative, 2.) +
-            (pow(bkg_err_conservative * area_apert, 2) / area_annulus) * np.pi / 2)
+            pow(bkg_err, 2.),
+            (pow(bkg_err * area_apert, 2) / area_annulus) * np.pi / 2
+            ])
+        )
+
+        # stat_err = np.sqrt(
+        #     # uncertainty from data in the aperture
+        #     pow(apert_flux_err, 2.) +
+        #     # uncertainty due to background fluctuation
+        #     pow(bkg_err, 2.) +
+        #     (pow(bkg_err * area_apert, 2) / area_annulus) * np.pi / 2)
+
+        src_flux_err = np.sqrt(stat_err ** 2 + wiggle_err ** 2)
 
         flux_dict = {
             'apert_flux': apert_flux,
+            'apert_flux_err': apert_flux_err,
             'apert_bkg_median': apert_bkg_median,
             'src_flux': src_flux,
+            'stat_err': stat_err,
+            'wiggle_err': wiggle_err,
             'src_flux_err': src_flux_err,
             'flux_measure_ok_flag': flux_measure_ok_flag,
 
@@ -2382,6 +2438,57 @@ class EWTools:
         return ew, er_err
 
 
+
+    @staticmethod
+    def compute_nircam_photo_ew(left_band, right_band, narrow_band, flux_left_band, flux_right_band,
+                             flux_narrow_band, flux_err_left_band, flux_err_right_band, flux_err_narrow_band):
+        # get the piviot wavelength of both bands
+        pivot_wave_left_band = ObsTools.get_jwst_band_wave(
+            band=left_band, instrument='nircam',
+            wave_estimator='pivot_wave', unit='angstrom')
+        pivot_wave_right_band = ObsTools.get_jwst_band_wave(
+            band=right_band, instrument='nircam',
+            wave_estimator='pivot_wave', unit='angstrom')
+        pivot_wave_narrow_band = ObsTools.get_jwst_band_wave(
+            band=narrow_band, instrument='nircam',
+            wave_estimator='pivot_wave', unit='angstrom')
+        # get the effective width of the narrowband filter
+        w_eff_narrow_band = ObsTools.get_jwst_band_wave(
+            band=narrow_band, instrument='nircam',
+            wave_estimator='w_eff', unit='angstrom')
+
+        # now change from fluxes to flux densities
+        flux_dens_left_band = flux_left_band * helper_func.UnitTools.get_flux_unit_conv_fact(
+            old_unit='mJy', new_unit='erg A-1 cm-2 s-1', pixel_size=None, band_wave=pivot_wave_left_band)
+        flux_dens_right_band = flux_right_band * helper_func.UnitTools.get_flux_unit_conv_fact(
+            old_unit='mJy', new_unit='erg A-1 cm-2 s-1', pixel_size=None, band_wave=pivot_wave_right_band)
+        flux_dens_narrow_band = flux_narrow_band * helper_func.UnitTools.get_flux_unit_conv_fact(
+            old_unit='mJy', new_unit='erg A-1 cm-2 s-1', pixel_size=None, band_wave=pivot_wave_narrow_band)
+        # convert also uncertainties with factor
+        flux_err_dens_left_band = flux_err_left_band * helper_func.UnitTools.get_flux_unit_conv_fact(
+            old_unit='mJy', new_unit='erg A-1 cm-2 s-1', pixel_size=None, band_wave=pivot_wave_left_band)
+        flux_err_dens_right_band = flux_err_right_band * helper_func.UnitTools.get_flux_unit_conv_fact(
+            old_unit='mJy', new_unit='erg A-1 cm-2 s-1', pixel_size=None, band_wave=pivot_wave_right_band)
+        flux_err_dens_narrow_band = flux_err_narrow_band * helper_func.UnitTools.get_flux_unit_conv_fact(
+            old_unit='mJy', new_unit='erg A-1 cm-2 s-1', pixel_size=None, band_wave=pivot_wave_narrow_band)
+
+        # calculate the weighted continuum flux
+        weight_left_band = (pivot_wave_narrow_band - pivot_wave_left_band) / (pivot_wave_right_band - pivot_wave_left_band)
+        weight_right_band = (pivot_wave_right_band - pivot_wave_narrow_band) / (pivot_wave_right_band - pivot_wave_left_band)
+        weighted_continuum_flux_dens = weight_left_band * flux_dens_left_band + weight_right_band * flux_dens_right_band
+        # error propagation
+        weighted_continuum_flux_err_dens = np.sqrt(flux_err_dens_left_band ** 2 + flux_err_dens_right_band ** 2)
+
+        # EW estimation taken from definition at https://en.wikipedia.org/wiki/Equivalent_width
+        # be aware that the emission features have negative and absorption features have positive EW!
+        ew = ((weighted_continuum_flux_dens - flux_dens_narrow_band) / weighted_continuum_flux_dens) * w_eff_narrow_band
+        # uncertainty estimated via error propagation if this is not clear to you look here:
+        # https://en.wikipedia.org/wiki/Propagation_of_uncertainty
+        er_err = np.sqrt(((w_eff_narrow_band * flux_err_dens_narrow_band) / weighted_continuum_flux_dens) ** 2 +
+                         ((flux_dens_narrow_band * w_eff_narrow_band * weighted_continuum_flux_err_dens) /
+                          (weighted_continuum_flux_dens ** 2)) ** 2)
+
+        return ew, er_err
 
 
 

@@ -1470,7 +1470,6 @@ class FitTools:
                   ):
 
 
-
         initial_guess = [amp_guess, mu_guess, sig_guess]
         bounds = ([lower_amp, lower_mu, lower_sigma], [upper_amp, upper_mu, upper_sigma])  # (lower bounds, upper bounds)
         popt, pcov = curve_fit(f=FitTools.gaussian_func, xdata=x_data, ydata=y_data, sigma=y_data_err,
@@ -1480,6 +1479,12 @@ class FitTools:
 
         amp, mu, sig = popt
         amp_err, mu_err, sig_err = perr
+
+
+        # import matplotlib.pyplot as plt
+        # plt.plot(x_data, y_data, 'o')
+        #
+        # plt.show()
 
         return {'amp': amp, 'mu': mu, 'sig': sig, 'amp_err': amp_err, 'mu_err': mu_err, 'sig_err': sig_err}
 

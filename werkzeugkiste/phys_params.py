@@ -6,8 +6,6 @@ Here we assemble all physical parameters needed
 sr_per_square_deg = 0.00030461741978671  # steradians per square degree
 
 
-
-
 #############################################
 #### Filter names for various telescopes ####
 #############################################

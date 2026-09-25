@@ -164,8 +164,10 @@ class SpecHelper:
         -------
         redshift : float
         """
-        # if target == 'ngc5068':
-        #     return 0.002235
+        # print('target ', target)
+
+        if (target == 'ngc5068') | (target == 'PGC046400'):
+            return 0.002235
 
         if target == 'ngc2903':
             return 0.001834
