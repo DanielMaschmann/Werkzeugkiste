@@ -1382,7 +1382,7 @@ class FuncAndModels:
         """
         This function follows the nomenclature of Thilker+2022 2022MNRAS.509.4094T
         """
-        characteristic_rad = fwhm / 2 * (2 ** (1 / nu) - 1)
+        characteristic_rad = fwhm / 2 / np.sqrt((2 ** (1 / nu) - 1))
 
         return mu_0 * (1 + rad**2 / (characteristic_rad ** 2)) ** (-nu)
 
@@ -1393,9 +1393,9 @@ class FuncAndModels:
         """
         rad = np.sqrt((x - x0)**2 + (y - y0)**2)
 
-        characteristic_rad = fwhm / 2 * (2 ** (1 / nu) - 1)
+        characteristic_rad = fwhm / 2 / np.sqrt((2 ** (1 / nu) - 1))
 
-        return mu_0 * (1 + rad**2 / (characteristic_rad ** 2)) ** (-nu)
+        return mu_0 * (1 + (rad**2) / (characteristic_rad ** 2)) ** (-nu)
 
 
 class FitTools:

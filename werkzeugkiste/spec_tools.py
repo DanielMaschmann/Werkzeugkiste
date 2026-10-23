@@ -19,11 +19,9 @@ except ImportError:
     print('Spectroscopic analysis of MUSE data relying on the TardisPipeline is not available. '
           'If you want to use this, clone the git repo at https://gitlab.com/francbelf/ifu-pipeline '
           'and add package to your root directory. ')
-from werkzeugkiste import helper_func, phys_params
+from werkzeugkiste import phys_params
 from werkzeugkiste.fit_tools import FitModels
 
-# print('H11 ', util.air_to_vac(3770.637))
-# exit()
 
 
 standard_gas_line_comp_dict = {

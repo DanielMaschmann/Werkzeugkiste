@@ -14,10 +14,12 @@ from photutils.detection import DAOStarFinder, find_peaks
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.stats import SigmaClip, sigma_clipped_stats
+from astropy.table import QTable, Table, Column
 from scipy import ndimage
 from werkzeugkiste import helper_func, phys_params
 from obszugang.psf_tools import PSFTools
 from obszugang import ObsTools
+
 
 class ProfileTools:
     """
@@ -1377,6 +1379,213 @@ class ApertTools:
             dec=dec, mask=mask, sigma_clip_sig=sigma_clip_sig, sigma_clip_maxiters=sigma_clip_maxiters)
 
     @staticmethod
+    def compute_standard_apert_photometry(
+            data,
+            data_err,
+            wcs,
+            pos,
+            apert_rad,
+            bkg_rad_annulus_in,
+            bkg_rad_annulus_out,
+            wiggle_shift_length=None,
+            mask=None,
+            sigma_clip_sig=3, sigma_clip_maxiters=10,
+            sum_method='exact'):
+        """
+        Function to compute standard aperture photometry by subtracting a background. The background is estimated in
+        an annulus. The source flux uncertainty is furthermore calculated including the flux uncertainty inside the
+        aperture, position uncertainty from wiggling and the uncertainty from the background subtraction.
+
+        Parameters
+        ----------
+        data : `numpy.ndarray`
+        data_err : `numpy.ndarray`
+        wcs : `astropy.wcs.WCS`
+        pos : `astropy.coordinates.SkyCoord`
+        apert_rad, bkg_rad_annulus_in, bkg_rad_annulus_out : float or `astropy.units.Quantity`
+            important: if the radii have no astropy quantity the unit ``arcsec`` will be assumed
+        wiggle_shift_length : float or `astropy.units.Quantity`
+            default is None.
+            important: if the wiggle_shift_length has no astropy quantity the unit ``arcsec`` will be assumed
+        mask : ``numpy.ndarray``
+            default is None
+        sigma_clip_sig : float
+            default is 3
+        sigma_clip_maxiters : int
+            default is 10
+        sum_method : str
+            default is 'exact' for other options see keyword doc in ``photutils.aperture.ApertureStats``
+        Returns
+        -------
+        photometry_table : ``astropy.table.Table``
+        """
+
+        # make sure that radii have quantity
+        if not isinstance(apert_rad, u.Quantity):
+            apert_rad *= u.arcsec
+        if not isinstance(bkg_rad_annulus_in, u.Quantity):
+            bkg_rad_annulus_in *= u.arcsec
+        if not isinstance(bkg_rad_annulus_out, u.Quantity):
+            bkg_rad_annulus_out *= u.arcsec
+        if wiggle_shift_length is not None:
+            if isinstance(wiggle_shift_length, u.Quantity):
+                wiggle_shift_length *= u.arcsec
+
+        # define apertures and annuli
+        apertures = SkyCircularAperture(positions=pos, r=apert_rad)
+        annuli = SkyCircularAnnulus(positions=pos, r_in=bkg_rad_annulus_in, r_out=bkg_rad_annulus_out)
+
+        # define a sigma-clipping class which will be used for the background
+        sig_clip = SigmaClip(sigma=sigma_clip_sig, maxiters=sigma_clip_maxiters)
+
+        # define mask to exclude bad data values
+        if mask is None:
+            if data_err is None:
+                mask = ((np.isinf(data)) | (np.isnan(data)))
+            else:
+                mask = ((np.isinf(data)) | (np.isnan(data)) | (np.isinf(data_err)) | (np.isnan(data_err)))
+
+        # get statistic instances for the apertures
+        # the aperture stats will directly provide the flux information inside the aperture.
+        stats_apertures = ApertureStats(data=data, aperture=apertures, error=data_err, wcs=wcs, sigma_clip=None,
+                                        mask=mask, sum_method=sum_method)
+        # the annuli will be used to compute the background
+        stats_bkg = ApertureStats(data=data, aperture=annuli, error=data_err, wcs=wcs, sigma_clip=sig_clip, mask=mask,
+                                  sum_method=sum_method)
+
+        # compute background subtracted aperture photometry
+        #
+        # step 1 calculate the flux inside the aperture which is simply the sum inside the aperture
+        aperture_flux = stats_apertures.sum
+        # now we need to subtract the background
+        # step 2 get the surfaces of aperture
+        area_apertures = stats_apertures.sum_aper_area.value
+        # step 3 get median background in annuli
+        bkg_median = stats_bkg.median
+        # step 3 scale the median background to the aperture area
+        scaled_bkg_median = bkg_median * area_apertures
+        # step 4 calculate the source flux which is the total flux from the aperture minus the bkg estimation
+        src_flux = aperture_flux - scaled_bkg_median
+
+        # compute the source flux uncertainty
+        #
+        # we consider 3 main sources of uncertainty:
+        #   a) statistical uncertainty inside the aperture which gets computed from the uncertainty map (data_err)
+        #   b) position uncertainty due to the centroid estimation of the sources
+        #   c) background uncertainty from fluctuations inside the background annulus
+        #
+        # a) statistical uncertainty
+        # from the ApertureStats: ``sum_err`` is the quadrature sum of the total errors over the unmasked pixels
+        # within the aperture
+        aperture_flux_err = stats_apertures.sum_err
+
+        # b) position uncertainty
+        # Here we use the wiggle method by simply moving the aperture by a fixed value in all 4 directions and compute
+        # the standard deviations to estimate the fluctuation.
+        # if the wiggle_shift_length is not given we use per default half a pixel.
+        if wiggle_shift_length is None:
+            wiggle_shift_length = (
+                    helper_func.CoordTools.transform_pix2world_scale(length_in_pix=0.5, wcs=wcs) * u.arcsec)
+        # define shifted apertures
+        apertures_north = SkyCircularAperture(positions=SkyCoord(ra=pos.ra, dec=pos.dec + wiggle_shift_length),
+                                              r=apert_rad)
+        apertures_south = SkyCircularAperture(positions=SkyCoord(ra=pos.ra, dec=pos.dec - wiggle_shift_length),
+                                              r=apert_rad)
+        apertures_west = SkyCircularAperture(positions=SkyCoord(ra=pos.ra + wiggle_shift_length, dec=pos.dec),
+                                             r=apert_rad)
+        apertures_east = SkyCircularAperture(positions=SkyCoord(ra=pos.ra - wiggle_shift_length, dec=pos.dec),
+                                             r=apert_rad)
+        # get statistic instances
+        stats_apertures_north = ApertureStats(data=data, aperture=apertures_north, error=None, wcs=wcs,
+                                              sigma_clip=None, mask=mask, sum_method=sum_method)
+        stats_apertures_south = ApertureStats(data=data, aperture=apertures_south, error=None, wcs=wcs,
+                                              sigma_clip=None, mask=mask, sum_method=sum_method)
+        stats_apertures_west = ApertureStats(data=data, aperture=apertures_west, error=None, wcs=wcs,
+                                             sigma_clip=None, mask=mask, sum_method=sum_method)
+        stats_apertures_east = ApertureStats(data=data, aperture=apertures_east, error=None, wcs=wcs,
+                                             sigma_clip=None, mask=mask, sum_method=sum_method)
+        # calculate the uncertainty arising from wiggling
+        wiggle_err = np.std([stats_apertures_north.sum, stats_apertures_south.sum, stats_apertures_west.sum,
+                             stats_apertures_east.sum],
+                            axis=0)
+
+        # c) background uncertainty
+        # for this we first estimate the 16th and 84th percentile within the annulus
+        pixel_annuli = annuli.to_pixel(wcs)
+        # transform them into a mask list
+        pixel_annuli_mask_list = pixel_annuli.to_mask(method='exact')
+        # we now have to loop over each annuli. It is not yet clear if this can be accelerated.
+        # the problem is that sometimes the position can be on non defined values like nan values.
+        # We therefore exclude these values and compute only those background uncertainties for radii that are
+        idx_list_good_bkg_values = np.where(np.invert(np.isnan(bkg_median)))[0]
+        pixel_annuli_mask_not_nan_list = [pixel_annuli_mask_list[i] for i in idx_list_good_bkg_values]
+        bkg_err_per_pixel_non_nan = np.zeros(len(pixel_annuli_mask_not_nan_list))
+        for annuli_idx, pixel_annuli_mask in enumerate(pixel_annuli_mask_not_nan_list):
+            # Option A: Get 1D array of mask-weighted pixel values
+            pixel_vals = pixel_annuli_mask.get_values(data)
+            # get the low and high percentile of all the pixel values in the annulus
+            # in case the pixel values are empty because the position is on a place where there is no
+            # print(pixel_vals)
+            # if len(pixel_vals) == 0:
+            #     bkg_err_per_pixel[annuli_idx] = np.nan
+            # else:
+            annulus_low_clip, annulus_high_clip = np.quantile(sig_clip(pixel_vals, masked=False),[0.16, 0.84])
+            bkg_err_per_pixel_non_nan[annuli_idx] = (annulus_high_clip - annulus_low_clip) / 2
+        # re-combine array with original length and set not computed values to nan
+        bkg_err_per_pixel = np.zeros(len(pixel_annuli_mask_list)) * np.nan
+        bkg_err_per_pixel[idx_list_good_bkg_values] = bkg_err_per_pixel_non_nan
+
+        # Final step of calculating the source uncertainty
+        """
+        In order to estimate the true source error we are following the logic of 
+        !!! use wayback machine to find this pdf !!!
+        https://wise2.ipac.caltech.edu/staff/fmasci/ApPhotUncert.pdf
+        
+        This is further adapted this procedure to the uncertainty estimation describes in 
+        Rodriguez+2025 2025ApJ...983..137R section 3.2
+        """
+
+        # get the numbers of pixels from the annuli
+        area_annuli = stats_bkg.sum_aper_area.value
+
+        # in particular, we combine the three errors we calculated above.
+        # it has to be noted that it is assumed that the flux estimate includes background subtraction and that there
+        # are no severe pixel-to-pixel correlations. This is usually the case for resampled and interpolated images (
+        # e.g., mosaics)
+        src_flux_err = np.sqrt(
+            # a) uncertainty from data in the aperture
+            aperture_flux_err ** 2 +
+            # b) uncertainty from centroid position
+            wiggle_err ** 2 +
+            # c) uncertainty due to background fluctuation
+            (bkg_err_per_pixel ** 2) * (area_apertures + (np.pi / 2) * ((area_apertures ** 2) / area_annuli)))
+
+        # finally create a table with all values sorted in columns
+        # we further provide also the maximum and minimum value estimated inside the aperture
+        aperture_min = stats_apertures.min
+        aperture_max = stats_apertures.max
+
+        return Table(
+            data=[src_flux, src_flux_err, aperture_flux_err, wiggle_err, bkg_err_per_pixel, area_apertures, area_annuli,
+                  aperture_min, aperture_max, bkg_median],
+            names=(
+                # final flux and flux uncertainty
+                'src_flux', 'src_flux_err',
+                # individual uncertainty components
+                'aperture_flux_err',
+                'wiggle_err',
+                'bkg_err_per_pixel',
+                'area_apertures',
+                'area_annuli',
+                # max and min values inside the aperture 
+                'aperture_min',
+                'aperture_max',
+                # median background
+                'bkg_median'
+            )
+        )
+
+    @staticmethod
     def compute_apert_photometry(apert_rad_arcsec, bkg_rad_annulus_in_arcsec, bkg_rad_annulus_out_arcsec, data,
                                  data_err, wcs, ra, dec, mask=None, sigma_clip_sig=3, sigma_clip_maxiters=10, sum_method='exact'):
 
@@ -1404,10 +1613,10 @@ class ApertTools:
             annulus_rad_out_pix=bkg_rad_annulus_out_pix, sum_method=sum_method, data=data, sig_clip=sig_clip,
             quantile_low=0.16, quantile_high=0.84)
 
-        bkg_10_clip, bkg_90_clip, bkg_ok_flag = ApertTools.compute_annulus_quantiles(
-            coords_pix=coords_pix, annulus_rad_in_pix=bkg_rad_annulus_in_pix,
-            annulus_rad_out_pix=bkg_rad_annulus_out_pix, sum_method=sum_method, data=data, sig_clip=sig_clip,
-            quantile_low=0.10, quantile_high=0.90)
+        # bkg_10_clip, bkg_90_clip, bkg_ok_flag = ApertTools.compute_annulus_quantiles(
+        #     coords_pix=coords_pix, annulus_rad_in_pix=bkg_rad_annulus_in_pix,
+        #     annulus_rad_out_pix=bkg_rad_annulus_out_pix, sum_method=sum_method, data=data, sig_clip=sig_clip,
+        #     quantile_low=0.10, quantile_high=0.90)
 
         # calculate stats in the aperture
         apert_stats = ApertTools.get_sky_apert_stats(
@@ -1431,7 +1640,8 @@ class ApertTools:
             aperture_rad_arcsec=apert_rad_arcsec, mask=mask, sig_clip=None, sum_method=sum_method)
 
         # calculate the uncertainty arising from wiggling
-        wiggle_err = np.std([apert_stats_north.sum, apert_stats_south.sum, apert_stats_left.sum, apert_stats_right.sum])
+        wiggle_err = np.std([apert_stats_north.sum, apert_stats_south.sum, apert_stats_left.sum, apert_stats_right.sum],
+                            axis=0)
         # get the surfaces of aperture and anulus
         area_apert = apert_stats.sum_aper_area.value
         area_annulus = bkg_stats.sum_aper_area.value
@@ -1665,7 +1875,8 @@ class ApertTools:
         return ApertureStats(data, apertures, error=data_err, mask=mask, sigma_clip=sig_clip, sum_method=sum_method)
 
     @staticmethod
-    def get_sky_annulus_stats(data, data_err, wcs, ra, dec, annulus_rad_in_arcsec, annulus_rad_out_arcsec, mask=None,
+    def get_sky_annulus_stats(data, data_err, wcs, ra, dec,
+                              annulus_rad_in_arcsec, annulus_rad_out_arcsec, mask=None,
                               sig_clip=None, sum_method='exact'):
         """
 
@@ -1683,8 +1894,7 @@ class ApertTools:
 
         Returns
         -------
-        flux : float
-        flux_err : float
+        ``photutils.aperture.ApertureStats``
         """
 
         pos = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
@@ -2436,8 +2646,6 @@ class EWTools:
                           (weighted_continuum_flux_dens ** 2)) ** 2)
 
         return ew, er_err
-
-
 
     @staticmethod
     def compute_nircam_photo_ew(left_band, right_band, narrow_band, flux_left_band, flux_right_band,
